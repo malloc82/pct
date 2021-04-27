@@ -1,4 +1,8 @@
-(ns pct.util.system)
+(ns pct.util.system
+  (:require [clojure.pprint :refer [pprint]])
+  (:import (java.awt.datatransfer DataFlavor Transferable StringSelection)
+           (java.awt Toolkit)
+           (java.io StringWriter)))
 
 (defn get-timestamp [] (.format (java.text.SimpleDateFormat. "YYYY-MM-dd'T'HH-mm-ss_Z") (java.util.Date.)))
 
@@ -20,3 +24,37 @@
       (if (or (= unit "TB") (< m 1024))
         (println (format "%.1f %s" m unit))
         (recur (/ m 1024) (rest s))))))
+
+;; Source: https://gist.github.com/baskeboler/7d226374582246d28b25801e28e18216
+(defn get-clipboard
+  "get system clipboard"
+  []
+  (-> (Toolkit/getDefaultToolkit)
+      (.getSystemClipboard)))
+
+(defn slurp-clipboard
+  "get latest string from clipboard"
+  []
+  (when-let [^Transferable clip-text (some-> (get-clipboard)
+                                             (.getContents nil))]
+    (when (.isDataFlavorSupported clip-text DataFlavor/stringFlavor)
+      (->> clip-text
+           (#(.getTransferData % DataFlavor/stringFlavor))
+           (cast String)))))
+
+(defn spit-clipboard
+  "write string s to clipboard"
+  [s]
+  (let [sel (StringSelection. s)]
+    (some-> (get-clipboard)
+            (.setContents sel sel))))
+
+; an alias for spit
+(def  str->clipboard spit-clipboard)
+
+(defn  pprint-data-to-clipbaord
+  "pretty prints a data structure into the clipboard"
+  [d]
+  (let [wr (java.io.StringWriter.)]
+    (pprint d wr)
+    (str->clipboard (.toString wr))))

@@ -1,8 +1,8 @@
 {:paths ["src/clojure"]
 
- :deps {org.clojure/clojure       {:mvn/version "1.10.2-rc2"}
+ :deps {org.clojure/clojure       {:mvn/version "1.10.3"}
         org.clojure/tools.deps.alpha  {:git/url "https://github.com/clojure/tools.deps.alpha"
-                                   :sha     "d77476f3d5f624249462e275ae62d26da89f320b"} ;; add-lib3 branch
+                                       :sha     "d77476f3d5f624249462e275ae62d26da89f320b"} ;; add-lib3 branch
         org.clojure/core.async    {:mvn/version "1.3.610"}
         org.clojure/core.cache    {:mvn/version "1.0.207"}
         org.clojure/spec.alpha    {:mvn/version "0.2.194"}
@@ -12,7 +12,7 @@
         net.cgrand/xforms         {:mvn/version "0.19.2"}
         org.zeromq/jeromq         {:mvn/version "0.5.2"}
         org.clojure/tools.cli     {:mvn/version "1.0.194"}
-        com.taoensso/timbre       {:mvn/version "5.1.0"}
+        com.taoensso/timbre       {:mvn/version "5.1.2"}
         ;; org.clojure/tools.logging {:mvn/version "1.1.0"}
         org.slf4j/slf4j-log4j12   {:mvn/version "1.7.30"}
         uncomplicate/neanderthal  {:mvn/version "0.35.0"}
@@ -24,17 +24,17 @@
             :main-opts  ["-m" "rebel-readline.main"]}
 
            :repl/cider
-           {:extra-deps {cider/cider-nrepl {:mvn/version "0.25.5"}}
+           {:extra-deps {cider/cider-nrepl {:mvn/version "0.26.0"}}
             :main-opts  ["-m" "nrepl.cmdline" "-i" "-p" "9000" "--middleware" "[cider.nrepl/cider-middleware]"]
             :jvm-opts   ["-Dclojure.core.async.pool-size=20"]}
 
            :repl/ecsn002
-           {:extra-deps {cider/cider-nrepl {:mvn/version "0.25.5"}}
+           {:extra-deps {cider/cider-nrepl {:mvn/version "0.26.0"}}
             :main-opts  ["-m" "nrepl.cmdline" "-i" "-p" "8002" "--middleware" "[cider.nrepl/cider-middleware]"]
             :jvm-opts   ["-Dclojure.core.async.pool-size=48" "-Xmx110g"]}
 
            :dev-repl/ecsn002
-           {:extra-deps {cider/cider-nrepl              {:mvn/version "0.25.5"}
+           {:extra-deps {cider/cider-nrepl              {:mvn/version "0.26.0"}
                          refactor-nrepl/refactor-nrepl  {:mvn/version "2.5.0"}
                          nrepl/nrepl                    {:mvn/version "0.8.3"}
                          org.clojure/tools.analyzer     {:mvn/version "1.0.0"}
@@ -62,14 +62,16 @@
                          #_"--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED"]}
 
            :dev-repl/local
-           {:extra-deps {cider/cider-nrepl             {:mvn/version "0.25.5"}
-                         refactor-nrepl/refactor-nrepl {:mvn/version "2.5.0"}
-                         nrepl/nrepl                   {:mvn/version "0.8.3"}}
+           {:extra-deps {cider/cider-nrepl             {:mvn/version "0.26.0"}
+                         ;; refactor-nrepl/refactor-nrepl {:mvn/version "2.5.0"}
+                         nrepl/nrepl                   {:mvn/version "0.8.3"}
+                         vlaaad/reveal                 {:mvn/version "1.3.195"}}
             :exec-fn    pct.util.repl/start-repl
             :exec-args  {:interactive true
                          :port 9000
                          :middleware [cider.nrepl/cider-middleware,
-                                      refactor-nrepl.middleware/wrap-refactor]
+                                      ;; refactor-nrepl.middleware/wrap-refactor ;; bad with reveal
+                                      vlaaad.reveal.nrepl/middleware]
                          :color true
                          :verbose true}
             :jvm-opts   ["-Dclojure.core.async.pool-size=20"

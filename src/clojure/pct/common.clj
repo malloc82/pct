@@ -2,13 +2,19 @@
   (:use clojure.core)
   (:require [clojure.core.async :as a :refer  [<!! >!! go go-loop <! >! put! close! alts! chan timeout thread]]
             [taoensso.timbre :as timbre]
-            [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]])
+            [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]]
+            [uncomplicate.neanderthal
+             [core :refer :all]
+             [block :refer [buffer contiguous?]]
+             [native :refer :all]]
+            [uncomplicate.neanderthal.auxil :refer :all])
   (:import [java.nio IntBuffer]
            [java.util ArrayList]
            [java.util.concurrent Executors Executor ThreadLocalRandom]))
 
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
+
 
 (defn fill-sorted-seq
   "Assuming s is an sorted integer sequence, return a seq with missing numbers"
@@ -115,9 +121,6 @@
           (do (.add p-list p)
               (recur (remove #(= (rem ^long % ^long p) 0) (drop 1 s))))
           (concat (vec p-list) s))))))
-
-(defn prime? [^long n ^ArrayList plist]
-  (every? #(not= (rem n ^long %) 0) plist))
 
 (defn first-prime [s plist]
   (loop [s s]
@@ -262,6 +265,14 @@
 
 
 (def prime-seq prime-seq3)
+
+(defn prime?
+  ([^long n]
+   (let [ps ^ints (prime-seq n)
+         len (alength ps)]
+     (= n (aget ps (unchecked-dec-int len)))))
+  ([^long n ^ArrayList plist]
+   (every? #(not= (rem n ^long %) 0) plist)))
 
 
 (defmacro rad2deg [r] `(/ (* 180.0 ~r) Math/PI))
@@ -522,4 +533,52 @@
           (aset a i (aget a j))
           (aset a j i)
           (recur (unchecked-inc i)))))))
+
+
+(defn median-filter
+  "Run meidan filter on ith slice of serialized x"
+  [x i & {:keys [offset radius rows cols]
+                            :or {radius 2
+                                 offset 40000
+                                 rows 200
+                                 cols 200}}]
+  (let [radius (int radius)
+        v (subvector x (int (* (int i) (int offset))) (int offset))
+        m (view-ge v (int rows) (int cols))
+        n (inc (* radius 2))
+        r_end   (int (- (mrows m) 2))
+        c_end   (int (- (ncols m) 2))
+        mid     (int (quot (* n n) 2))]
+    (let-release [mask (ge v n n)
+                  _m (copy m)]
+      (loop [r radius]
+        (when (< r r_end)
+          (loop [c radius]
+            (when (< c c_end)
+              (copy! (submatrix m  (- r radius) ^int (- c radius) n n) mask)
+              (_m r c ((sort+! (view-vctr mask)) mid))
+              (recur (inc c))))
+          (recur (inc r))))
+      (copy! _m m))))
+
+
+(defn median-filter2
+  "Run median filter on matrix m"
+  [m & {:keys [radius in-place] :or {radius 2 in-place false}}]
+  (let [radius  (int radius)
+        n (inc (* radius 2))
+        r_end   (int (- (mrows m) 2))
+        c_end   (int (- (ncols m) 2))
+        mid     (int (quot (* n n) 2))]
+    (let-release [mask (trans (ge m n n))
+                  _m   (copy m)]
+      (loop [r radius]
+        (when (< r r_end)
+          (loop [c radius]
+            (when (< c c_end)
+              (copy! (submatrix m  (- r radius) ^int (- c radius) n n) mask)
+              (_m r c ((sort+! (view-vctr mask)) mid))
+              (recur (inc c))))
+          (recur (inc r))))
+      (if in-place (copy! _m m) _m))))
 
