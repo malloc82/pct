@@ -392,21 +392,27 @@
               ;; (tap> [state (:slices parent-node) (:slices curr-node)])
               (case state
                 :head
-                (if (connect-upstream curr-node parent-node)
-                  (do
-                    (when-let [hist (next visited)]
-                      (loop [p (first (first hist))
-                             q (next hist)]
-                        (if (connect-upstream curr-node p)
-                          (if q
-                            (recur (first (first q)) (next q))))))
-                    (if (upstream-full? curr-node)
-                      (if (.hasNext curr-it)
-                        (recur :left-parent (.next curr-it) parent-node))
-                      (if (.hasNext parent-it)
-                        (recur :right-parent curr-node (.next parent-it))
-                        (recur :tail-patch   curr-node parent-node))))
-                  (throw (Exception. "In setupConnection: :head, curr and parent node don't match")))
+                (if (upstream-full? curr-node)
+                  (if (.hasNext curr-it)
+                    (recur :body (.next curr-it) parent-node))
+                  (if (connect-upstream curr-node parent-node)
+                    (do
+                      (when-let [hist (next visited)]
+                        (loop [p (first (first hist))
+                               q (next hist)]
+                          (if (connect-upstream curr-node p)
+                            (if q
+                              (recur (first (first q)) (next q))))))
+                      (if (upstream-full? curr-node)
+                        (if (.hasNext curr-it)
+                          (recur :body (.next curr-it) parent-node))
+                        (if (.hasNext parent-it)
+                          (recur :body curr-node (.next parent-it))
+                          (recur :tail-patch   curr-node parent-node))))
+                    (do
+                      (tap> curr-node)
+                      (tap> parent-node)
+                      (throw (Exception. "In setupConnection: :head, curr and parent node don't match")))))
 
                 ;; :head-patch
                 ;; (let [hist (next visited)]
@@ -438,22 +444,22 @@
                         (recur :tail-patch curr-node parent-node))
                       (throw (Exception. "In setupConnection: both curr-node and parent-node not full and cannot connect.")))))
 
-                :left-parent
-                (if (connect-upstream curr-node parent-node)
-                  (if (.hasNext parent-it)
-                    (recur :right-parent curr-node (.next parent-it))
-                    (recur :tail-patch curr-node parent-node))
-                  (if (.hasNext parent-it)
-                    (recur state curr-node (.next parent-it))
-                    (recur :tail-patch curr-node parent-node)))
+                ;; :left-parent
+                ;; (if (connect-upstream curr-node parent-node)
+                ;;   (if (.hasNext parent-it)
+                ;;     (recur :right-parent curr-node (.next parent-it))
+                ;;     (recur :tail-patch curr-node parent-node))
+                ;;   (if (.hasNext parent-it)
+                ;;     (recur state curr-node (.next parent-it))
+                ;;     (recur :tail-patch curr-node parent-node)))
 
-                :right-parent
-                (if (connect-upstream curr-node parent-node)
-                  (if (upstream-full? curr-node)
-                    (if (.hasNext curr-it)
-                      (recur :left-parent (.next curr-it) parent-node))
-                    (throw (Exception. "In setupConnection: upstream is still not full after :right-parent connection")))
-                  (throw (Exception. "In setupConnection: :right-parent does not connect")))
+                ;; :right-parent
+                ;; (if (connect-upstream curr-node parent-node)
+                ;;   (if (upstream-full? curr-node)
+                ;;     (if (.hasNext curr-it)
+                ;;       (recur :left-parent (.next curr-it) parent-node))
+                ;;     (throw (Exception. "In setupConnection: upstream is still not full after :right-parent connection")))
+                ;;   (throw (Exception. "In setupConnection: :right-parent does not connect")))
 
                 :tail-patch
                 (let [hist (next visited)]
