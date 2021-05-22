@@ -53,6 +53,28 @@
                          ,}
             :exec-fn    pct.util.repl/start-repl
             :exec-args  {:interactive true
+                         :port 9002
+                         :middleware [cider.nrepl/cider-middleware,
+                                      refactor-nrepl.middleware/wrap-refactor]
+                         :color true
+                         :verbose true
+                         ;; :global-vars {*warn-on-reflecntion* true
+                         ;;               *unchecked-math* :warn-on-boxed}
+                         ,}
+            :main-opts  ["-m" "nrepl.cmdline" "-i" "-p" "9002"
+                         "--middleware" "[cider.nrepl/cider-middleware]"]
+            :jvm-opts ^:replace ["-Dclojure.core.async.pool-size=48" "-Xmx110g"
+                                 "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED"]}
+
+           :dev-repl/lm001
+           {:extra-deps {cider/cider-nrepl              {:mvn/version "0.26.0"}
+                         refactor-nrepl/refactor-nrepl  {:mvn/version "2.5.0"}
+                         nrepl/nrepl                    {:mvn/version "0.8.3"}
+                         org.clojure/tools.analyzer     {:mvn/version "1.0.0"}
+                         org.clojure/tools.analyzer.jvm {:mvn/version "1.1.0"}
+                         ,}
+            :exec-fn    pct.util.repl/start-repl
+            :exec-args  {:interactive true
                          :port 8000
                          :middleware [cider.nrepl/cider-middleware,
                                       refactor-nrepl.middleware/wrap-refactor]
@@ -61,10 +83,9 @@
                          ;; :global-vars {*warn-on-reflecntion* true
                          ;;               *unchecked-math* :warn-on-boxed}
                          ,}
-            :main-opts  ["-m" "nrepl.cmdline" "-i" "-p" "8001"
+            :main-opts  ["-m" "nrepl.cmdline" "-i" "-p" "8000"
                          "--middleware" "[cider.nrepl/cider-middleware]"]
-            :jvm-opts ^:replace ["-Dclojure.core.async.pool-size=48" "-Xmx110g"
-                         ;; For uncomplicate/neanderthal maybe?
+            :jvm-opts ^:replace ["-Dclojure.core.async.pool-size=72" "-Xmx110g"
                                  "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED"]}
 
            :dev-repl/local
@@ -80,7 +101,7 @@
                                       vlaaad.reveal.nrepl/middleware]
                          :color true
                          :verbose true}
-            :main-opts  ["-m" "nrepl.cmdline" "-i" "-p" "9000"
+            :main-opts  ["-m" "nrepl.cmdline" "-i" "-p" "8000"
                          "--middleware" "[cider.nrepl/cider-middleware vlaaad.reveal.nrepl/middleware]"]
             :jvm-opts ["-Dclojure.core.async.pool-size=32"
                          ;; For uncomplicate/neanderthal, with java 9+

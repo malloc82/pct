@@ -1,5 +1,6 @@
 (ns user
-  (:require [clojure.core.async :as a]
+  (:require pct.util.system
+            [clojure.core.async :as a]
             [clojure.spec.alpha :as spec]
             [clojure.set :as set]
             [clojure.core.async.impl.mutex :as mutex]
@@ -17,5 +18,9 @@
              [mkl :as mkl]]
             [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]]))
 
-(println "hello, user")
+(println "\nhello, user. Welcome to" (str (pct.util.system/localhost)))
+(println "  Physical Cores: " pct.util.system/PhysicalCores)
+(println "  Logical Cores:  " pct.util.system/LogicalCores)
+(println "  JVM Max Heap:   " (pct.util.system/memorySize))
+(println "\n")
 
