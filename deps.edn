@@ -61,7 +61,7 @@
                          ;; :global-vars {*warn-on-reflecntion* true
                          ;;               *unchecked-math* :warn-on-boxed}
                          ,}
-            :main-opts  ["-m" "nrepl.cmdline" "-i" "-p" "9000"
+            :main-opts  ["-m" "nrepl.cmdline" "-i" "-p" "8001"
                          "--middleware" "[cider.nrepl/cider-middleware]"]
             :jvm-opts ^:replace ["-Dclojure.core.async.pool-size=48" "-Xmx110g"
                          ;; For uncomplicate/neanderthal maybe?
