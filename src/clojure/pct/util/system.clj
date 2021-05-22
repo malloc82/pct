@@ -2,7 +2,20 @@
   (:require [clojure.pprint :refer [pprint]])
   (:import (java.awt.datatransfer DataFlavor Transferable StringSelection)
            (java.awt Toolkit)
-           (java.io StringWriter)))
+           (java.io StringWriter)
+           [oshi SystemInfo]
+           [oshi.hardware HardwareAbstractionLayer CentralProcessor]))
+
+(set! *warn-on-reflection* true)
+(set! *unchecked-math* true)
+
+
+;; doc: https://oshi.github.io/oshi/oshi-core/apidocs/
+(defonce ^:private ^HardwareAbstractionLayer hw (.getHardware (SystemInfo.)))
+(defonce ^:private ^CentralProcessor cpu (.getProcessor hw))
+
+(defonce PhysicalCores (.getPhysicalProcessorCount cpu))
+(defonce LogicalCores  (.getLogicalProcessorCount  cpu))
 
 (defn get-timestamp [] (.format (java.text.SimpleDateFormat. "YYYY-MM-dd'T'HH-mm-ss_Z") (java.util.Date.)))
 
@@ -26,7 +39,7 @@
         (recur (/ m 1024) (rest s))))))
 
 ;; Source: https://gist.github.com/baskeboler/7d226374582246d28b25801e28e18216
-(defn get-clipboard
+(defn ^java.awt.datatransfer.Clipboard get-clipboard
   "get system clipboard"
   []
   (-> (Toolkit/getDefaultToolkit)
@@ -38,8 +51,7 @@
   (when-let [^Transferable clip-text (some-> (get-clipboard)
                                              (.getContents nil))]
     (when (.isDataFlavorSupported clip-text DataFlavor/stringFlavor)
-      (->> clip-text
-           (#(.getTransferData % DataFlavor/stringFlavor))
+      (->> (.getTransferData clip-text DataFlavor/stringFlavor)
            (cast String)))))
 
 (defn spit-clipboard

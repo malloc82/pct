@@ -5,7 +5,8 @@
             [clojure.spec.alpha :as spec]
             [clojure.set :as set]
             [clojure.core.async.impl.mutex :as mutex]
-            [clojure.inspector :as inspector])
+            [clojure.inspector :as inspector]
+            [taoensso.timbre :as timbre])
   (:import [java.util HashMap TreeSet TreeMap LinkedList Iterator]
            [java.util.concurrent.locks Lock]
            [clojure.core.async.impl.channels ManyToManyChannel]))
@@ -51,7 +52,7 @@
   (slice-count [this]))
 
 
-(defprotocol IAsyncNode
+(defprotocol IAsyncSetup
   (get-overlap              [upstream downstream]    "given an downstream node, find the first continuous overlapping slices")
   (connect-upstream         [this upstream]          "set up a connection with an upstream node")
   (connect-downstream*      [this downstream slices] "** Should only be called from connect-upstream **")
@@ -62,6 +63,11 @@
   (downstream-full?         [this]                   "test if downstream connection is saturated")
   (get-connection-status    [this]                   "get current upstream & downstream connection info as a persistent data"))
 
+
+(defprotocol IAsyncCommunication
+  (asyncTest [this f] "For testing, f args: [in out]"))
+
+(defprotocol IAsyncCompute)
 
 (defrecord NodeConnection [^TreeSet connected ^HashMap connection]
   IConnection
@@ -98,11 +104,16 @@
 
 
 (defrecord AsyncNode [key slices
-                      ^ManyToManyChannel ch-in ^ManyToManyChannel ch-out ch-mult
+                      ^ManyToManyChannel ch-in ^ManyToManyChannel ch-out mux-out ;; data channels
+                      ^ManyToManyChannel ch-log ;; data logging, for debugging & testing
                       ^TreeSet unused
                       ^NodeConnection upstream ^NodeConnection downstream
                       ^HashMap local-offsets ^clojure.lang.PersistentVector global-offset]
-  IAsyncNode
+  clojure.lang.IFn
+  (invoke [this] (count slices))
+  (invoke [this k] (k this))
+
+  IAsyncSetup
   (get-overlap [this downstream-node]
     (let [it     (clojure.lang.RT/iter unused)
           slices (:slices downstream-node)]
@@ -129,7 +140,7 @@
         (do ;; (.removeAll ^TreeSet (:unused upstream-node) usage)
           ;; (add-node (:downstream upstream-node) key usage)
           (add-node upstream (:key upstream-node) usage)
-          (a/tap (:ch-mult upstream-node) ch-in)
+          (a/tap (:mux-out upstream-node) ch-in)
           (connect-downstream* upstream-node key usage)
           true)
         false)))
@@ -141,7 +152,7 @@
   (disconnect-upstream [this upstream-node]
     (if-let [usage (get-slices upstream (:key upstream-node))]
       (do (remove-node upstream (:key upstream-node))
-          (a/untap (:ch-mult upstream-node) ch-in)
+          (a/untap (:mux-out upstream-node) ch-in)
           (.addAll unused usage)
           (disconnect-downstream* upstream-node key)
           ;; (remove-node (:downstream upstream-node) key)
@@ -161,7 +172,12 @@
     (= (count slices) (slice-count upstream)))
 
   (downstream-full? [this]
-    (= (count slices) (slice-count downstream))))
+    (= (count slices) (slice-count downstream)))
+
+  ;; IAsyncCommunication
+  ;; (distribute [this f]
+  ;;   (f this))
+  )
 
 
 (defn newAsyncNode [slices]
@@ -171,7 +187,8 @@
         n (int (count slices))]
     (map->AsyncNode {:ch-in      (a/chan 4)
                      :ch-out     ch-out
-                     :ch-mult    (a/mult ch-out)
+                     :mux-out    (a/mult ch-out)
+                     :ch-log     (a/chan 4)
                      :key        (keyword (clojure.string/join "-" slices))
                      :slices     (into (sorted-set) slices)
                      :unused     (TreeSet. ^java.util.Collection slices)
@@ -180,13 +197,72 @@
                      :global-offset [(int (first slices)) n (int 0)] ;; offset-x, length, offset-y
                      :local-offsets (HashMap. n)})))
 
-(defprotocol IAsyncGrid
-  (connect-nodes [this])
-  (compute-offsets [this]))
 
-(defrecord AsyncGrid [^int slice-count ^int max-block-size
-                      ^clojure.lang.PersistentHashMap lut ^clojure.lang.PersistentVector grid]
+(defprotocol IAsyncGrid
+  (get-grid [this])
+  (get-table [this])
+  (connect-nodes [this])
+  (compute-offsets [this])
+
+  (distribute-selected [this cond-fn f] [this cond-fn f args] "apply f to selected nodes, filtered by cond-fn")
+  (distribute-all      [this f] [this f args]                 "apply f to every node")
+  (collect-data    [this] [this cond-fn]      "Collect one data from each of the selected node, filtered by cond-fn")
+  (data-log   [this]  "get a data log channel"))
+
+(def grid-walker (recursive-path [] p (if-path vector? [ALL p] STAY)))
+
+(deftype AsyncGrid [^int slice-count ^int max-block-size
+                    ^clojure.lang.PersistentHashMap lut ^clojure.lang.PersistentVector grid]
+  clojure.lang.Counted
+  (count [this] (count lut))
+
+  ;; java.util.Map
+  ;; (clear [thisf])
+  ;; (containsKey [this k])
+  ;; (containsValue [this val])
+  ;; (entrySet [this])
+  ;; (get [this k]
+  ;;   (lut k))
+  ;; (hashCode [this])
+  ;; (isEmpty [this])
+  ;; (keySet [this])
+  ;; (put [this k v])
+  ;; (putAll [this m])
+  ;; (remove [this k])
+  ;; (size [this])
+  ;; (values [this])
+
+  clojure.lang.IFn
+  (invoke [this] (count lut))
+  (invoke [this k] (lut k))
+  (invoke [this i j] ((grid i) j))
+  (invoke [this i j k] (((grid i) j) k))
+  (applyTo [this arglist]
+    (let [[a b c] arglist
+          n (count arglist)]
+      (case n
+        0 (.invoke this)
+        1 (.invoke this a)
+        2 (.invoke this a b)
+        3 (.invoke this a b c)
+        (throw (Exception. (format "AsyncGrid.applyTo: invalid arglist, expected 1, 2 or 3, got %d." n))))))
+
+  clojure.lang.IKeywordLookup
+  (getLookupThunk [this k]
+    (reify clojure.lang.ILookupThunk
+      (get [thunk g]
+        (if (identical? (class this) (class g))
+          (lut k)
+          thunk))))
+
+  java.lang.Iterable
+  (iterator [this]
+    (clojure.lang.RT/iter (select grid-walker grid)))
+
   IAsyncGrid
+  (get-grid  [this] grid)
+  (get-table [this] lut)
+
   (connect-nodes [this]
     (let [tiered-nodes (apply concat grid)]
       (loop [todo      (next  tiered-nodes)
@@ -291,8 +367,8 @@
             local-offsets ^HashMap (:local-offsets node)]
         (doseq [[k v] ups]
           ;; (tap> ["here" k v])
-          (let [seg-head (first v)
-                up-head  (-> (k lut) :slices first)]
+          (let [seg-head ^long (first v)
+                up-head  ^long (-> (k lut) :slices first)]
             ;; (tap> ["here2:" seg-head up-head (k lut) (-> (k lug) :slices)])
 
             ;; used for copying data from reveived vector to local vector:
@@ -310,34 +386,143 @@
                            (- seg-head up-head)
                            (count v)
                            (- seg-head local-head)])
-            (.put local-offsets k  [(- seg-head up-head) (count v) (- seg-head local-head)])))))))
+            (.put local-offsets k  [(- seg-head up-head) (count v) (- seg-head local-head)]))))))
 
-(defn newAsyncGrid [slice-count max-block-size]
-  (let [node-map ^HashMap (HashMap. ^int (int (* slice-count max-block-size))) ;; good estimate on size
-        slice-idx (range slice-count)
-        block-gen  (fn [block-size]
-                    (->> (range block-size)
-                         (mapv (fn [bi]
-                                 (->> slice-idx
-                                      ;; get the starting index of each block
-                                      (filterv #(and (= (mod % block-size) bi) (<= (+ % block-size) slice-count)))
-                                      ;; ((fn [x] (println (mapv #(range % (+ % s)) x)) ", " x))
-                                      (mapv #(let [node (newAsyncNode (range % (+ % block-size)))]
-                                               (.put node-map (:key node) node)
-                                               node)))))
-                         (filterv #(not (empty? %)))))
-        blocks (mapv #(block-gen %) (range 1 (inc max-block-size)))]
-    (map->AsyncGrid {:slice-count (int slice-count) :max-block-size (int max-block-size)
-                     :lut (into {} node-map) :grid blocks})))
+  (distribute-selected [this cond-fn f]
+    (loop [s (select [grid-walker cond-fn] grid)]
+      (when-let [node (first s)]
+        (f node)
+        (recur (next s)))))
+
+  (distribute-selected [this cond-fn f args]
+    (loop [s (select [grid-walker cond-fn] grid)]
+      (when-let [node (first s)]
+        (apply f node args)
+        (recur (next s)))))
+
+  (distribute-all [this f]
+    (loop [s (select grid-walker grid)]
+      (when-let [node (first s)]
+        ;; (tap> ["f => " (:key node)])
+        (f node)
+        (recur (next s)))))
+
+  (distribute-all [this f args]
+    (loop [s (select grid-walker grid)]
+      (when-let [node (first s)]
+        (apply f node args)
+        (recur (next s)))))
+
+  (collect-data [this]
+    (collect-data this (fn [_] true)))
+
+  (collect-data [this cond-fn]
+    (let [out (a/chan 1)]
+      (a/go
+        (let [nodes (select [grid-walker cond-fn] grid)
+              cs (mapv :ch-log nodes)]
+         (loop [remaining (into #{} (mapv :key nodes))
+                acc (transient {})]
+           (if (empty? remaining)
+             (a/>! out (persistent! acc))
+             (let [[[k data] ch] (a/alts! cs)]
+               (if (and k (remaining k))
+                 (recur (disj remaining k) (assoc! acc k [data (:global-offset (lut k)) ] ))
+                 (recur remaining acc)))))))
+
+      #_(a/thread
+        (let [acc ^HashMap (HashMap.)]
+         (loop [remaining (into #{} (mapv :ch-log (select [grid-walker cond-fn] grid)))]
+           (if (empty? remaining)
+             (a/>!! out acc)
+             (let [[[k data] ch] (a/alts!! (vec remaining))]
+               (if k
+                 (.put acc k data))
+               (recur (disj remaining ch)))))))
+      out))
+
+  (data-log [this]
+    (let [log-ch (a/chan (* (count lut) 2))
+          mix-out (a/mix log-ch)]
+      (doseq [d (select grid-walker grid)]
+        (a/admix mix-out (:ch-log d)))
+      log-ch)))
+
+(defn newAsyncGrid
+  ([slice-count max-block-size]
+   (newAsyncGrid slice-count max-block-size nil))
+  ([slice-count max-block-size connect?]
+   (let [node-map ^HashMap (HashMap. ^int (int (* slice-count max-block-size))) ;; good estimate on size
+         slice-idx (range slice-count)
+         block-gen  (fn [block-size]
+                      (->> (range block-size)
+                           (mapv (fn [bi]
+                                   (->> slice-idx
+                                        ;; get the starting index of each block
+                                        (filterv #(and (= (mod % block-size) bi) (<= (+ % block-size) slice-count)))
+                                        ;; ((fn [x] (println (mapv #(range % (+ % s)) x)) ", " x))
+                                        (mapv #(let [node (newAsyncNode (range % (+ % block-size)))]
+                                                 (.put node-map (:key node) node)
+                                                 node)))))
+                           (filterv #(not (empty? %)))))
+         blocks (mapv #(block-gen %) (range 1 (inc max-block-size)))
+         grid   (AsyncGrid. (int slice-count) (int max-block-size) (into {} node-map) blocks)]
+     (if connect?
+       (doto grid
+         (connect-nodes)
+         (compute-offsets))
+       grid)
+     #_(map->AsyncGrid {:slice-count (int slice-count) :max-block-size (int max-block-size)
+                        :lut (into {} node-map) :grid blocks}))))
 
 
-(def grid-walker (recursive-path [] p (if-path vector? [ALL p] STAY)))
+
+
+
 (spec/def ::all-slices-used?
-  (fn [grid]
-    (->> (:grid grid)
-         (select grid-walker)
-         (transform [ALL] (fn [x] (and (empty? (:unused x))
-                                      (= (:slices x) (.connected  ^NodeConnection (:upstream x)))
-                                      (= (:slices x) (.connected  ^NodeConnection (:downstream x))))))
-         (every? true?))))
+  (fn [x] (and (empty? (:unused x))
+              (= (:slices x) (.connected  ^NodeConnection (:upstream x)))
+              (= (:slices x) (.connected  ^NodeConnection (:downstream x))))))
 
+(spec/def ::local-offsets-length-consistent?
+  #(= (count (:slices %)) (reduce + (mapv (fn[[_ v]] (v 1)) (:local-offsets %)))))
+
+(defn local-offset-range-check [x]
+  (mapv (fn [[k v]]
+          [k (if-let [s (clojure.string/split (str k) #"-")]
+               (let [slen (count s)
+                     n    (count (:slices x))]
+                 ;; (tap> [v s slen n])
+                 (and (< (v 0) slen) (<= (+ (v 0) (v 1)) slen)
+                      (< (v 2) n)    (<= (+ (v 2) (v 1)) n)))
+               false)])
+        (:local-offsets x)))
+
+(spec/def ::local-offsets-in-range? #(every? second
+                                             (let [res (local-offset-range-check %)]
+                                               ;; (tap> res)
+                                               res)))
+
+
+(defn local-offsets-check [x]
+  (let [idx-list (sort-by first
+                          (mapv (fn [[k v]]
+                                  [(v 2) (v 1)])
+                                (:local-offsets x)))]
+    (loop [idx-list idx-list
+           idx (long 0)]
+      (if-let [[^long i ^long len] (first idx-list)]
+        (if (= idx i)
+          (recur (next idx-list) (+ i len))
+          false)
+        (= idx (count (:slices x)))))))
+
+(spec/def ::local-offsets-consistent? #(local-offsets-check %))
+
+(defn global-offsets-check [s]
+  (let [[g-offset length l-offset] (:global-offset s)]
+    (and (= g-offset (first (:slices s)))
+         (= length (count (:slices s)))
+         (= l-offset 0))))
+
+(spec/def ::global-offset-consistent? #(global-offsets-check %))

@@ -1,5 +1,7 @@
 (ns pct.util.repl
-  (:require nrepl.cmdline pct.logging clojure.core.async taoensso.timbre clojure.core.async))
+  (:require nrepl.cmdline pct.logging clojure.core.async taoensso.timbre clojure.core.async
+            pct.util.system
+            [nrepl.server :refer [stop-server]]))
 
 (defonce ^:private log-chan (clojure.core.async/chan 64))
 
@@ -48,6 +50,7 @@
        (uncaughtException [_ thread ex]
          (taoensso.timbre/error ex (format "Uncaught exception on [%s]" (.getName thread))))))
 
+
     (nrepl.cmdline/set-signal-handler! "INT" handle-interrupt)
 
     (when global-vars
@@ -72,6 +75,7 @@
 (defn -main
   [& args]
   (try
+    (println "here?")
     (nrepl.cmdline/set-signal-handler! "INT" handle-interrupt)
     (let [[options _args] (nrepl.cmdline/args->cli-options args)]
       (nrepl.cmdline/dispatch-commands options))
