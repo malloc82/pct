@@ -18,9 +18,13 @@
              [mkl :as mkl]]
             [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]]))
 
-(println "\nhello, user. Welcome to" (str (pct.util.system/localhost)))
-(println "  Physical Cores: " pct.util.system/PhysicalCores)
-(println "  Logical Cores:  " pct.util.system/LogicalCores)
-(println "  JVM Max Heap:   " (pct.util.system/memorySize))
-(println "\n")
+;; (set! *warn-on-reflection* true)
+(set! *unchecked-math* :warn-on-boxed)
+
+
+(println "\nHello, user. Welcome to" (str (pct.util.system/localhost)))
+(println "    Physical Cores: " pct.util.system/PhysicalCores)
+(println "    Logical Cores:  " pct.util.system/LogicalCores)
+(println "    JVM Max Heap:   " (clojure.string/join " " (pct.util.system/memorySize true)))
+(println "")
 

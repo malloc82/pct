@@ -7,7 +7,7 @@
            [oshi.hardware HardwareAbstractionLayer CentralProcessor]))
 
 (set! *warn-on-reflection* true)
-(set! *unchecked-math* true)
+(set! *unchecked-math* :warn-on-boxed)
 
 
 ;; doc: https://oshi.github.io/oshi/oshi-core/apidocs/
@@ -16,6 +16,7 @@
 
 (defonce PhysicalCores (.getPhysicalProcessorCount cpu))
 (defonce LogicalCores  (.getLogicalProcessorCount  cpu))
+(defonce MaxHeapSize   (.maxMemory (Runtime/getRuntime)))
 
 (defn get-timestamp [] (.format (java.text.SimpleDateFormat. "YYYY-MM-dd'T'HH-mm-ss_Z") (java.util.Date.)))
 
@@ -30,13 +31,16 @@
 (defn localhost []
   (java.net.InetAddress/getLocalHost))
 
-(defn memorySize []
-  (loop [m ^double (double (.maxMemory (Runtime/getRuntime)))
-         s ["B" "KB" "MB" "GB" "TB"]]
-    (let [unit (first s)]
-      (if (or (= unit "TB") (< m 1024))
-        (println (format "%.1f %s" m unit))
-        (recur (/ m 1024) (rest s))))))
+(defn memorySize [human-readable]
+  (let [heap ^double (double (.maxMemory (Runtime/getRuntime)))]
+    (if human-readable
+      (loop [m heap
+             s ["B" "KB" "MB" "GB" "TB"]]
+        (let [unit (first s)]
+          (if (or (= unit "TB") (< m 1024))
+            [m unit]
+            (recur (/ m 1024) (rest s)))))
+      [heap "B"])))
 
 ;; Source: https://gist.github.com/baskeboler/7d226374582246d28b25801e28e18216
 (defn ^java.awt.datatransfer.Clipboard get-clipboard
