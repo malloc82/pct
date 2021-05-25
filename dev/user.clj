@@ -16,7 +16,9 @@
              [api :as api]]
             [uncomplicate.neanderthal.internal.host
              [mkl :as mkl]]
-            [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]]))
+            [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]]
+            pct.common pct.data.io pct.data)
+  (:import [java.util ArrayList HashMap]))
 
 ;; (set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)

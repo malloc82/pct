@@ -14,10 +14,10 @@
 (defonce ^:private ^HardwareAbstractionLayer hw (.getHardware (SystemInfo.)))
 (defonce ^:private ^CentralProcessor cpu (.getProcessor hw))
 
-(defonce ^int  PhysicalCores (.getPhysicalProcessorCount cpu))
-(defonce ^int  LogicalCores  (.getLogicalProcessorCount  cpu))
-(defonce ^long MaxHeapSize   (.maxMemory (Runtime/getRuntime)))
-(defonce ^long MaxMemory     (-> hw .getMemory .getTotal))
+(defonce PhysicalCores (.getPhysicalProcessorCount cpu))
+(defonce LogicalCores  (.getLogicalProcessorCount  cpu))
+(defonce MaxHeapSize   (.maxMemory (Runtime/getRuntime)))
+(defonce MaxMemory     (-> hw .getMemory .getTotal))
 
 (defonce ^:private log-chan (clojure.core.async/chan pct.util.system/LogicalCores))
 

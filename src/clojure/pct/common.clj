@@ -122,35 +122,6 @@
               (recur (remove #(= (rem ^long % ^long p) 0) (drop 1 s))))
           (concat (vec p-list) s))))))
 
-(defn first-prime [s plist]
-  (loop [s s]
-    (if-let [[a & rst] s]
-      (if (prime? a plist)
-        [a rst]
-        (recur rst))
-      nil)))
-
-(defn- prime-seq1
-  [^long n] ;; looking for prime number within [2, n]
-  (let [plist (ArrayList. [2 3 5 7])
-        sieve (.subList plist 1 4) ;; no need to check 2 or 5's factor
-        max-s (int (Math/sqrt n))
-        i ^long (loop [i 11]
-                  (if (<= i max-s)
-                    (do (if (prime? i sieve)
-                          (.add sieve i))
-                        (recur (+ i 2)))
-                    i))]
-    (println "i = " i "sieve size = " (.size sieve))
-    (let [full-plist (ArrayList. plist)]
-      (loop [i ^long i]
-        (if (<= i n)
-          (do (if (prime? i sieve)
-                (.add full-plist i))
-              (recur (+ i 2)))
-          full-plist)))))
-
-
 (defn- prime-seq2
   [^long n] ;; looking for prime number within [2, n]
   (let [mark   (byte-array n)
@@ -230,7 +201,6 @@
                 (recur (+ i 1)))
               p)))))))
 
-
 (defn firstPrime
   "Return a index of first element that is greater than x, assuming plist is sorted.
    If x is out of bound of plist, return -1.
@@ -274,6 +244,34 @@
   ([^long n ^ArrayList plist]
    (every? #(not= (rem n ^long %) 0) plist)))
 
+
+(defn- prime-seq1
+  [^long n] ;; looking for prime number within [2, n]
+  (let [plist (ArrayList. [2 3 5 7])
+        sieve (.subList plist 1 4) ;; no need to check 2 or 5's factor
+        max-s (int (Math/sqrt n))
+        i ^long (loop [i 11]
+                  (if (<= i max-s)
+                    (do (if (prime? i sieve)
+                          (.add sieve i))
+                        (recur (+ i 2)))
+                    i))]
+    (println "i = " i "sieve size = " (.size sieve))
+    (let [full-plist (ArrayList. plist)]
+      (loop [i ^long i]
+        (if (<= i n)
+          (do (if (prime? i sieve)
+                (.add full-plist i))
+              (recur (+ i 2)))
+          full-plist)))))
+
+(defn first-prime [s plist]
+  (loop [s s]
+    (if-let [[a & rst] s]
+      (if (prime? a plist)
+        [a rst]
+        (recur rst))
+      nil)))
 
 (defmacro rad2deg [r] `(/ (* 180.0 ~r) Math/PI))
 
