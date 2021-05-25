@@ -25,6 +25,9 @@
 (println "\nHello, user. Welcome to" (str (pct.util.system/localhost)))
 (println "    Physical Cores: " pct.util.system/PhysicalCores)
 (println "    Logical Cores:  " pct.util.system/LogicalCores)
-(println "    JVM Max Heap:   " (clojure.string/join " " (pct.util.system/memorySize true)))
+(println "    Max Memory:     " (let [[s u] (pct.util.system/readableFormat pct.util.system/MaxMemory)]
+                                  (format "%.2f %s" s u)))
+(println "    JVM Max Heap:   " (let [[s u] (pct.util.system/readableFormat pct.util.system/MaxHeapSize)]
+                                  (format "%.2f %s" s u)))
 (println "")
 

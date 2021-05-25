@@ -14,9 +14,10 @@
 (defonce ^:private ^HardwareAbstractionLayer hw (.getHardware (SystemInfo.)))
 (defonce ^:private ^CentralProcessor cpu (.getProcessor hw))
 
-(defonce PhysicalCores (.getPhysicalProcessorCount cpu))
-(defonce LogicalCores  (.getLogicalProcessorCount  cpu))
-(defonce MaxHeapSize   (.maxMemory (Runtime/getRuntime)))
+(defonce ^int  PhysicalCores (.getPhysicalProcessorCount cpu))
+(defonce ^int  LogicalCores  (.getLogicalProcessorCount  cpu))
+(defonce ^long MaxHeapSize   (.maxMemory (Runtime/getRuntime)))
+(defonce ^long MaxMemory     (-> hw .getMemory .getTotal))
 
 (defn get-timestamp [] (.format (java.text.SimpleDateFormat. "YYYY-MM-dd'T'HH-mm-ss_Z") (java.util.Date.)))
 
@@ -31,16 +32,13 @@
 (defn localhost []
   (java.net.InetAddress/getLocalHost))
 
-(defn memorySize [human-readable]
-  (let [heap ^double (double (.maxMemory (Runtime/getRuntime)))]
-    (if human-readable
-      (loop [m heap
-             s ["B" "KB" "MB" "GB" "TB"]]
-        (let [unit (first s)]
-          (if (or (= unit "TB") (< m 1024))
-            [m unit]
-            (recur (/ m 1024) (rest s)))))
-      [heap "B"])))
+(defn readableFormat [n]
+  (let [iter (clojure.lang.RT/iter ["B" "KB" "MB" "GB" "TB"])]
+   (loop [n ^double (double n)
+          unit (.next iter)]
+     (if (or (< n 1024.0) (not (.hasNext iter)))
+       [n unit]
+       (recur (/ n 1024.0) (.next iter))))))
 
 ;; Source: https://gist.github.com/baskeboler/7d226374582246d28b25801e28e18216
 (defn ^java.awt.datatransfer.Clipboard get-clipboard
