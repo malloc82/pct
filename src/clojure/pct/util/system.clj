@@ -1,5 +1,5 @@
 (ns pct.util.system
-  (:require [clojure.pprint :refer [pprint]])
+  (:require pct.logging taoensso.timbre [clojure.pprint :refer [pprint]])
   (:import (java.awt.datatransfer DataFlavor Transferable StringSelection)
            (java.awt Toolkit)
            (java.io StringWriter)
@@ -18,6 +18,25 @@
 (defonce ^int  LogicalCores  (.getLogicalProcessorCount  cpu))
 (defonce ^long MaxHeapSize   (.maxMemory (Runtime/getRuntime)))
 (defonce ^long MaxMemory     (-> hw .getMemory .getTotal))
+
+(defonce ^:private log-chan (clojure.core.async/chan pct.util.system/LogicalCores))
+
+(taoensso.timbre/merge-config! {:timestamp-opts {:pattern "yyyy-MM-dd @ HH:mm:ss Z"
+                                                 :locale  :jvm-default
+                                                 :timezone (java.util.TimeZone/getTimeZone "America/Chicago")}
+                                :appenders
+                                { ;; :println (timbre/println-appender {:stream :auto})
+                                 :println nil
+                                 ;; :spit (appenders/spit-appender {:fname "./log/timbre-spit.log"})
+                                 ;; :spit (rotor/rotor-appender {:path "./log/messages.log"})
+                                 :spit (pct.logging/async-appender {:channel log-chan :path "./log/messages.log"})
+                                 }})
+
+;; exception handler setting for core.async threads
+(Thread/setDefaultUncaughtExceptionHandler
+ (reify Thread$UncaughtExceptionHandler
+   (uncaughtException [_ thread ex]
+     (taoensso.timbre/error ex (format "Uncaught exception on [%s]" (.getName thread))))))
 
 (defn get-timestamp [] (.format (java.text.SimpleDateFormat. "YYYY-MM-dd'T'HH-mm-ss_Z") (java.util.Date.)))
 

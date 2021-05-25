@@ -1,5 +1,5 @@
 (ns user
-  (:require pct.util.system
+  (:require pct.util.system taoensso.timbre
             [clojure.core.async :as a]
             [clojure.spec.alpha :as spec]
             [clojure.set :as set]
@@ -21,13 +21,21 @@
 ;; (set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
 
+(let [mem (let [[s u] (pct.util.system/readableFormat pct.util.system/MaxMemory)]
+            (format "%.2f %s" s u))
+      heap (let [[s u] (pct.util.system/readableFormat pct.util.system/MaxHeapSize)]
+             (format "%.2f %s" s u))]
+  (println "\nHello, user. Welcome to" (str (pct.util.system/localhost)))
+  (println "    Physical Cores: " pct.util.system/PhysicalCores)
+  (println "    Logical Cores:  " pct.util.system/LogicalCores)
+  (println "    Max Memory:     " mem)
+  (println "    JVM Max Heap:   " heap)
+  (println "")
 
-(println "\nHello, user. Welcome to" (str (pct.util.system/localhost)))
-(println "    Physical Cores: " pct.util.system/PhysicalCores)
-(println "    Logical Cores:  " pct.util.system/LogicalCores)
-(println "    Max Memory:     " (let [[s u] (pct.util.system/readableFormat pct.util.system/MaxMemory)]
-                                  (format "%.2f %s" s u)))
-(println "    JVM Max Heap:   " (let [[s u] (pct.util.system/readableFormat pct.util.system/MaxHeapSize)]
-                                  (format "%.2f %s" s u)))
-(println "")
+  (taoensso.timbre/info " >>>>>>>>>>>>>>> * user.clj loaded * <<<<<<<<<<<<<<<"  "")
+  (taoensso.timbre/info "    Physical Cores: " pct.util.system/PhysicalCores)
+  (taoensso.timbre/info "    Logical Cores:  " pct.util.system/LogicalCores)
+  (taoensso.timbre/info "    Max Memory:     " mem)
+  (taoensso.timbre/info "    JVM Max Heap:   " heap))
+
 
