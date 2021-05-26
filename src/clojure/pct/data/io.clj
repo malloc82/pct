@@ -376,57 +376,57 @@
         in-ch      (a/chan jobs)
         out-ch     (vec (repeatedly jobs #(a/chan (int (/ jobs 2)))))
         init-x     (:x0 dataset)
-        offset     (* ^long (:rows dataset) ^long (:cols dataset))
-        res-ch     (pct.async.threads/asyncWorkers
-                    jobs
-                    (fn [^objects bulk-data]
-                      (let [len ^long (long (alength bulk-data))
-                            acc ^HashMap (HashMap.)]
-                        (loop [i (long 0)]
-                          (if (< i len)
-                            (let [history ^pct.data.HistoryBuffer (aget bulk-data i)]
-                              (when (pct.data/long-enough?*  history min-len)
-                                (pct.data/tag-sliceIDs*  history offset)
-                                (when-not (empty? (.slices history))
-                                  (let [ks (vec (sort (keys (.slices history))))
-                                        idx (int (ks 0))
-                                        last-slice (int (ks (dec (count ks))))
-                                        len (inc (- last-slice idx))]
-                                    ;; (timbre/info (format "idx, len = [%d, %d]" idx len))
-                                    (when (not= len (count ks))
-                                      (timbre/info "Warning: Path has skipped slice(s)!! --> " ks))
-                                    (if-let [s ^HashMap (.get acc idx)]
-                                      (if-let [bs ^ArrayList (.get s len)]
-                                        (.add bs (pct.data/toPathData history init-x))
-                                        #_(.add bs (toPathData history (* offset idx)))
-                                        (let [a ^ArrayList (ArrayList.)]
+        offset     (* ^long (:rows dataset) ^long (:cols dataset))]
+    (timbre/info (format "Loading dataset with %d workers, batch size = %d" jobs batch-size))
+    (let [res-ch     (pct.async.threads/asyncWorkers
+                      jobs
+                      (fn [^objects bulk-data]
+                        (let [len ^long (long (alength bulk-data))
+                              acc ^HashMap (HashMap.)]
+                          (loop [i (long 0)]
+                            (if (< i len)
+                              (let [history ^pct.data.HistoryBuffer (aget bulk-data i)]
+                                (when (pct.data/long-enough?*  history min-len)
+                                  (pct.data/tag-sliceIDs*  history offset)
+                                  (when-not (empty? (.slices history))
+                                    (let [ks (vec (sort (keys (.slices history))))
+                                          idx (int (ks 0))
+                                          last-slice (int (ks (dec (count ks))))
+                                          len (inc (- last-slice idx))]
+                                      ;; (timbre/info (format "idx, len = [%d, %d]" idx len))
+                                      (when (not= len (count ks))
+                                        (timbre/info "Warning: Path has skipped slice(s)!! --> " ks))
+                                      (if-let [s ^HashMap (.get acc idx)]
+                                        (if-let [bs ^ArrayList (.get s len)]
+                                          (.add bs (pct.data/toPathData history init-x))
+                                          #_(.add bs (toPathData history (* offset idx)))
+                                          (let [a ^ArrayList (ArrayList.)]
+                                            (.add a (pct.data/toPathData history init-x))
+                                            #_(.add a (toPathData history (* offset idx)))
+                                            (.put s len a)))
+                                        (let [m ^HashMap (HashMap.)
+                                              a ^ArrayList (ArrayList.)]
                                           (.add a (pct.data/toPathData history init-x))
                                           #_(.add a (toPathData history (* offset idx)))
-                                          (.put s len a)))
-                                      (let [m ^HashMap (HashMap.)
-                                            a ^ArrayList (ArrayList.)]
-                                        (.add a (pct.data/toPathData history init-x))
-                                        #_(.add a (toPathData history (* offset idx)))
-                                        (.put m len a)
-                                        (.put acc idx m))))))
-                              (recur (unchecked-inc i)))
-                            acc))))
-                    (fn
-                      ([] (pct.data/createHistoryIndex (:rows dataset) (:cols dataset) (:slices dataset)))
-                      ([acc] acc)
-                      ([^pct.data.HistoryIndex acc ^HashMap m]
-                       (pct.data/mergeIndex* acc m)
-                       (.clear m)
-                       acc))
-                    in-ch)
-        res (pct.common/with-out-str-data-map
-              (time (do (timbre/info "Start indexing ....")
-                        (pct.data/rest* (:in-stream dataset) in-ch batch-size)
-                        (let [index (a/<!! res-ch)]
-                          (timbre/info "Finished making index." )
-                          index))))
-        ,]
-    (println "here?")
-    (timbre/info (clojure.string/replace (:str res) #"[\n\"]" ""))
-    res
-    #_(count-voxel-hits*  (:ans res) {:forced true :jobs jobs :batch-size batch-size})))
+                                          (.put m len a)
+                                          (.put acc idx m))))))
+                                (recur (unchecked-inc i)))
+                              acc))))
+                      (fn
+                        ([] (pct.data/createHistoryIndex (:rows dataset) (:cols dataset) (:slices dataset)))
+                        ([acc] acc)
+                        ([^pct.data.HistoryIndex acc ^HashMap m]
+                         (pct.data/mergeIndex* acc m)
+                         (.clear m)
+                         acc))
+                      in-ch)
+          res (pct.common/with-out-str-data-map
+                (time (do (timbre/info "Start indexing ....")
+                          (pct.data/rest* (:in-stream dataset) in-ch batch-size)
+                          (let [index (a/<!! res-ch)]
+                            (timbre/info "Finished making index." )
+                            index))))]
+      (println "here?")
+      (timbre/info (clojure.string/replace (:str res) #"[\n\"]" ""))
+      ;; res
+      (pct.data/count-voxel-hits*  (:ans res) {:forced true :jobs jobs :batch-size batch-size}))))

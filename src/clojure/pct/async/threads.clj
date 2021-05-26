@@ -33,7 +33,7 @@
           (let [out (out-ch i)]
             (loop []
               (if-let [job (a/<!! from)]
-                (do (taoensso.timbre/info (format "thread [%d]: got job to do." i))
+                (do #_(taoensso.timbre/info (format "thread [%d]: got job to do." i))
                     (let [res (xf job)]
                       (a/>!! out res)
                       (recur)))
@@ -54,7 +54,7 @@
                 nil)
             (let [[v p] (a/alts!! outs)]
               (if v
-                (do (taoensso.timbre/info (format "collector thread: got data"))
+                (do #_(taoensso.timbre/info (format "collector thread: got data"))
                     (recur (acc-fn acc v) cs outs))
                 (let [new-cs (disj cs p)]
                   (recur acc new-cs (vec new-cs)))))))

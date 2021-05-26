@@ -631,7 +631,7 @@
 
 
 (defn voxel-count-batch [histories rows cols slices]
-  (let [n (count histories)]
+  #_(let [n (count histories)]
     #_(timbre/info (format "Start counting voxels for %d histories" n))
     (let [res (reduce (fn [^RealBlockVector acc ^PathData h]
                         (reduce (fn [^RealBlockVector acc idx] (acc idx (inc ^double (acc idx))))
@@ -640,7 +640,22 @@
                       (dv (* ^long rows ^long cols ^long slices))
                       histories)]
       #_(timbre/info (format "Finished counting voxels for %d histories" n))
-      res)))
+      res))
+  (let [acc (dv (* ^long rows ^long cols ^long slices))
+        it  (clojure.lang.RT/iter histories)]
+    (loop []
+      (when (.hasNext it)
+        (let [path ^PathData (.next it)
+              arr ^ints (.path ^PathData path)
+              len (alength arr)]
+          (loop [i (long 0)]
+            (if (< i len)
+              (let [idx (aget arr i)
+                    c ^double (acc idx)]
+                (acc idx (+ ^double c 1))
+                (recur (unchecked-inc i))))))
+        (recur)))
+    acc))
 
 
 (deftype HistoryIndex [^ArrayList sliceIndex
