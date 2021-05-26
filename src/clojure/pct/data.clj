@@ -94,7 +94,7 @@
   (next* [this] [this n] [this n out-ch]
     "read next data, if n is given will read the next n data to acc.
      If acc could be either a container or a channel")
-  (rest* [this] [this out-ch] "read the remaining data to out channel")
+  (rest* [this] [this out-ch] [this out-ch batch] "read the remaining data to out channel")
   ;; (reset* [this]    "reset position")
   (length* [this] ))
 
@@ -407,59 +407,51 @@
 
   (next* [this]
     (when open?
-      (let [s (if bis
-                (HistoryBuffer->fromStream index pis bis)
-                (HistoryBuffer->fromStream index pis))]
+      (let [s (HistoryBuffer->fromStream index pis bis)]
         (set! index (inc index))
         s)))
 
   (next* [this n]
     (let [acc ^ArrayList (ArrayList. (int n))
           last-idx (+ index ^long n)]
-      (if bis
-        (loop [i index]
-          (if (< i last-idx)
-            (when-let [b (HistoryBuffer->fromStream i pis bis)]
-              (.add acc b)
-              (recur (inc i)))
-            (set! index i)))
-        (loop [i index]
-          (if (< i last-idx)
-            (when-let [b (HistoryBuffer->fromStream i pis)]
-              (.add acc b)
-              (recur (inc i)))
-            (set! index i))))
+      (loop [i index]
+        (if (< i last-idx)
+          (when-let [b (HistoryBuffer->fromStream i pis bis)]
+            (.add acc b)
+            (recur (inc i)))
+          (set! index i)))
       acc))
 
   (next* [this n out-ch]
     (let [last-idx (+ index ^long n)]
-      (if bis
-        (loop [i index]
-          (if (< i last-idx)
-            (when-let [b (HistoryBuffer->fromStream i pis bis)]
-              (>!! out-ch b)
-              (recur (inc i)))
-            (set! index i)))
-        (loop [i index]
-          (if (< i last-idx)
-            (when-let [b (HistoryBuffer->fromStream i pis)]
-              (>!! out-ch b)
-              (recur (inc i)))
-            (set! index i)))))
+      (loop [i index]
+        (if (< i last-idx)
+          (when-let [b (HistoryBuffer->fromStream i pis bis)]
+            (>!! out-ch b)
+            (recur (inc i)))
+          (set! index i))))
     (a/close! out-ch))
 
-  (rest* [this out-ch] ;; read 
-    (if bis
-      (loop []
+  (rest* [this out-ch] ;; read
+    (loop []
+      (when-let [b (HistoryBuffer->fromStream index pis bis)]
+        (set! index (inc index))
+        (>!! out-ch b)
+        (recur)))
+    (a/close! out-ch))
+
+  (rest* [this out-ch batch-size]
+    (let [batch-size ^long batch-size]
+      (loop [acc ^objects (object-array batch-size)
+             i   ^long    (long 0)]
         (when-let [b (HistoryBuffer->fromStream index pis bis)]
-          (set! index (inc index))
-          (>!! out-ch b)
-          (recur)))
-      (loop []
-        (when-let [b (HistoryBuffer->fromStream index pis)]
-          (set! index (inc index))
-          (>!! out-ch b)
-          (recur))))
+          (if (>= i batch-size)
+            (let [new-acc ^objects (object-array batch-size)]
+              (>!! out-ch acc)
+              (aset new-acc 0 b)
+              (recur new-acc (long 0)))
+            (do (aset acc i b)
+                (recur acc (unchecked-inc i)))))))
     (a/close! out-ch))
 
   (length* [_] length)
@@ -961,7 +953,7 @@
     (valAt [this idx not-found]
       (let [[s-id len] idx]
         (if-let [s ^HashMap (.get sliceIndex (int s-id))]
-          (if len
+p          (if len
             (.getOrDefault s (int len) not-found)
             s)
           not-found)))
