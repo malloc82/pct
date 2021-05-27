@@ -463,13 +463,15 @@
                      (.clear m)
                      acc))
                   in-ch)
-          res (pct.common/with-out-str-data-map
-                (time (do (timbre/info "Start indexing ....")
-                          (pct.data/rest* (.in-stream dataset) in-ch batch-size)
-                          (let [index (a/<!! res-ch)]
-                            (timbre/info "Finished making index." )
-                            index))))]
-      (println "here?")
+          res (try (pct.common/with-out-str-data-map
+                     (time (do (timbre/info "Start indexing ....")
+                               (pct.data/rest* (.in-stream dataset) in-ch batch-size)
+                               (let [index (a/<!! res-ch)]
+                                 (timbre/info "Finished making index." )
+                                 index))))
+                   (catch Exception ex
+                     (a/close! in-ch)
+                     (timbre/error ex "[load-dataset] Something went wrong in feeder" (.getName (Thread/currentThread)))))]
       (timbre/info (clojure.string/replace (:str res) #"[\n\"]" ""))
-      #_(pct.data/count-voxel-hits*  (:ans res) {:forced true :jobs jobs :batch-size batch-size})
+      (pct.data/count-voxel-hits*  (:ans res) {:forced true :jobs jobs :batch-size batch-size})
       res)))

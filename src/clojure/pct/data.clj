@@ -836,7 +836,9 @@
   (counted?* [_]
     (not (every? #(every? nil? %) voxel-histograms)))
 
-  (count-voxel-hits* [this] (count-voxel-hits* this {:forced false :jobs 24 :batch-size 250000}))
+  (count-voxel-hits* [this] (count-voxel-hits* this {:forced false
+                                                     :jobs (- ^int pct.util.system/PhysicalCores 4)
+                                                     :batch-size 250000}))
 
   (count-voxel-hits* [this opts]
     (let [{forced     :forced
@@ -911,18 +913,18 @@
                                           to)]
               (timbre/info "Voxel hit counting finished.")
               this))
-        (let [out-chs (vec (repeatedly jobs #(a/chan (int (/ (int jobs) 2)))))
-              data-ch (a/chan jobs)
+        (let [data-ch (a/chan jobs)
               res-ch (pct.async.threads/asyncWorkers
                       jobs
                       (fn [[data start-idx len]]
-                        [(voxel-count-batch data rows cols slices) start-idx len])
+                        [#_(voxel-count-batch data rows cols slices)nil  start-idx len])
                       (fn
                         ([] voxel-histograms)
                         ([acc] acc)
-                        ([^ArrayList acc [^RealBlockVector v-hist ^int start-idx ^int len]]
-                         (let [branch ^ArrayList (.get acc start-idx)]
-                           (timbre/info (format "Updating branch [%d, %d]" start-idx len))
+                        ([^ArrayList acc [#_^RealBlockVector v-hist _ ^int start-idx ^int len]]
+                         (timbre/info (format "Updating branch [%d, %d]" start-idx len))
+                         acc
+                         #_(let [branch ^ArrayList (.get acc start-idx)]
                            (when (>= len (.size branch))
                              (timbre/info "Sizing up the branch" start-idx "to" (inc len))
                              (ensureSize entry (inc len) (fn [] nil)))
@@ -933,21 +935,26 @@
                       data-ch)]
           (let []
             ;; dispatch
-            (loop [start-idx ^long (long 0)]
-              (if (< start-idx slices)
-                (let [branch ^ArrayList (.get sliceIndex start-idx)
-                      branch-len ^long  (long (.size sliceIndex))]
-                  (loop [len ^long (long 0)]
-                    (if (< len branch-len)
-                      (let [data  (.get branch len)
-                            parts (partition batch-size data)
-                            it    (clojure.lang.RT/iter parts)]
-                        (loop []
-                          (when (.hasNext it)
-                            (a/>!! data-ch [(.next it) start-idx len])
-                            (recur)))
-                        (recur (unchecked-inc len)))))
-                  (recur (unchecked-inc start-idx)))))
+            (try
+              (loop [start-idx ^long (long 0)]
+                (if (< start-idx slices)
+                  (let [branch ^ArrayList (.get sliceIndex start-idx)
+                        branch-len ^long  (long (.size branch))]
+                    (loop [len ^long (long 0)]
+                      (if (< len branch-len)
+                        (let [data  (.get branch len)
+                              parts (partition batch-size data)
+                              it    (clojure.lang.RT/iter parts)]
+                          (loop []
+                            (when (.hasNext it)
+                              (a/>!! data-ch [(.next it) start-idx len])
+                              (recur)))
+                          (recur (unchecked-inc len)))))
+                    (recur (unchecked-inc start-idx)))
+                  (a/close! data-ch)))
+              (catch Exception ex
+                (a/close! data-ch)
+                (timbre/error ex "[count-voxel-hits*] Something went wrong during dispatch." (.getName (Thread/currentThread)))))
             (a/<!! res-ch)
             this))
         #_(count-voxels voxel-histograms rows cols slices :jobs jobs :batch-size batch-size))))
