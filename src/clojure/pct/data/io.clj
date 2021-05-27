@@ -12,7 +12,8 @@
              [native :refer :all]])
   (:import [java.nio ByteOrder ByteBuffer IntBuffer]
            [java.io FileOutputStream BufferedOutputStream BufferedInputStream RandomAccessFile File]
-           [java.util HashMap ArrayList]))
+           [java.util HashMap ArrayList]
+           [uncomplicate.neanderthal.internal.host.buffer_block IntegerBlockVector RealBlockVector]))
 
 
 
@@ -390,8 +391,9 @@
         min-len    (long (or (:min-len opts) 0))
         batch-size (long (or (:batch-size opts) 20000))
         in-ch      (a/chan jobs)
-        init-x     (:x0 dataset)
+        init-x     ^RealBlockVector (.x0 dataset)
         offset     (slice-offset dataset)
+        [rows cols slices] (size dataset)
         min-max-fn (fn [^ints a]
                      (let [len (alength a)]
                        (if (> len 0)
@@ -454,7 +456,7 @@
                             (recur (unchecked-inc i)))
                           acc))))
                   (fn
-                    ([] (pct.data/createHistoryIndex (:rows dataset) (:cols dataset) (:slices dataset)))
+                    ([] (pct.data/createHistoryIndex rows cols slices))
                     ([acc] acc)
                     ([^pct.data.HistoryIndex acc ^HashMap m]
                      (pct.data/mergeIndex* acc m)
@@ -469,5 +471,5 @@
                             index))))]
       (println "here?")
       (timbre/info (clojure.string/replace (:str res) #"[\n\"]" ""))
-      ;; res
-      (pct.data/count-voxel-hits*  (:ans res) {:forced true :jobs jobs :batch-size batch-size}))))
+      #_(pct.data/count-voxel-hits*  (:ans res) {:forced true :jobs jobs :batch-size batch-size})
+      res)))

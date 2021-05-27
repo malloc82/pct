@@ -17,7 +17,7 @@
             [uncomplicate.neanderthal.internal.host
              [mkl :as mkl]]
             [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]]
-            pct.common pct.data.io pct.data)
+            pct.common pct.data pct.data.io)
   (:import [java.util ArrayList HashMap]))
 
 ;; (set! *warn-on-reflection* true)
@@ -34,7 +34,7 @@
   (println "    JVM Max Heap:   " heap)
   (println "")
 
-  (taoensso.timbre/info " >>>>>>>>>>>>>>> * user.clj loaded * <<<<<<<<<<<<<<<"  "")
+  (taoensso.timbre/info " >>>>>>>>>>>>>>> * dev/local/user.clj loaded * <<<<<<<<<<<<<<<"  "")
   (taoensso.timbre/info "    Physical Cores: " pct.util.system/PhysicalCores)
   (taoensso.timbre/info "    Logical Cores:  " pct.util.system/LogicalCores)
   (taoensso.timbre/info "    Max Memory:     " mem)

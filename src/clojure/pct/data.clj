@@ -1,6 +1,6 @@
 (ns pct.data
   (:use pct.common pct.io)
-  (:require pct.util.system
+  (:require pct.util.system pct.async.threads
             [com.rpl.specter :as sp]
             [clojure.java [io :as io]]
             [clojure.string :as s]
