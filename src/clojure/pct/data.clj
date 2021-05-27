@@ -1,6 +1,8 @@
 (ns pct.data
   (:use pct.common pct.io)
-  (:require [clojure.java [io :as io]]
+  (:require pct.util.system
+            [com.rpl.specter :as sp]
+            [clojure.java [io :as io]]
             [clojure.string :as s]
             [clojure.core.async :as a :refer  [<!! >!! go go-loop <! >! put! close! alts! chan timeout thread]]
             [taoensso.timbre :as timbre]
@@ -131,6 +133,13 @@
   (count-voxel-hits* [this] [this forced])
   (getVoxelCount* [this i] [this i j]))
 
+#_(deftype Index [^ArrayList index]
+  clojure.lang.IFn
+  (invoke [this i j]
+    (-> index (.get i) (.get j)))
+  (invoke [this i j f]
+    (f (-> index (.get i) (.get j)))))
+
 
 (deftype PathData [^int id ^ints path ^double chord-len
                    ^float entry-xy ^float entry-xz ^float exit-xy ^float exit-xz ^float path-angle
@@ -252,11 +261,16 @@
             this)))
       this))
 
+  clojure.lang.Counted
+  (count [_] path-length)
+
+  clojure.lang.IFn
+  (invoke [this i] (.get path (int i)))
+
   clojure.lang.Sequential
   clojure.lang.IPersistentVector
   (seq [this]
     (vseq this path-length 0))
-  (count [this] path-length)
   (nth [this i] (.get path (int i)))
   (nth [this i not-found]
     (if (< i path-length)
@@ -385,6 +399,30 @@
                          energy
                          len-buf path-buf chord-len-buf angle-buf e-buf (HashMap.))))))))
 
+(defn PathData->fromStream
+  "Read the path and b data from two seperate files provided by Paniz, each one contains everything.
+   pis : BufferedInputStream for path file
+   bis : BufferedInputstream for b file
+
+   Return a PathData"
+
+  ([^long id ^java.io.BufferedInputStream pis ^java.io.BufferedInputStream bis]
+   (when-let [[^int length ^bytes len-buf] (read-int pis true)]
+     (let [path-buf ^bytes (byte-array (* 4 length))
+           path ^ints  (int-array length)]
+       (-> (ByteBuffer/wrap ^bytes path-buf)
+           (.order ByteOrder/LITTLE_ENDIAN)
+           .asIntBuffer
+           (.get path))
+       (when-not (= (.read pis path-buf) -1)
+         (let [[^double chord-len   _] (read-double pis true)
+               [^FloatBuffer angles _] (read-floats pis 4 true)
+               [^float energy       _] (read-float  bis true)]
+           (->PathData id path chord-len
+                       (.get angles 0) (.get angles 1) (.get angles 2) (.get angles 3) (float -360.0)
+                       energy
+                       0.0
+                       nil)))))))
 
 (deftype HistoryInputStream [^java.io.BufferedInputStream pis ^java.io.BufferedInputStream bis ^long length
                              ^{:unsynchronized-mutable true :tag long} index
@@ -471,7 +509,9 @@
 
   clojure.lang.Seqable
   (seq [this]
-    (sseq this next*)))
+    (sseq this next*))
+  clojure.lang.Counted
+  (count [_] length))
 
 (defn newHistoryInputStream
   ([path-file]
@@ -657,9 +697,11 @@
         (recur)))
     acc))
 
+(def index-walker (sp/recursive-path [] p (sp/if-path #(instance? java.util.ArrayList %) [sp/ALL p] sp/STAY)))
 
 (deftype HistoryIndex [^ArrayList sliceIndex
-                       ^ArrayList voxel-histograms
+                       ^ArrayList voxel-histograms ;; keep track of histogram for each node on index,
+                                                   ;; so DROP could be computed independently for each block
                        ^{:unsynchronized-mutable true :tag int} total
                        ;; ^RealBlockVector voxel-histogram
                        ^int rows ^int cols ^int slices]
@@ -687,13 +729,13 @@
 
 
   (removeHistories* [this i j]
-      (when (< (int i) (.size sliceIndex))
-        (let [slice ^ArrayList (.get sliceIndex i)]
-          (when (< (int j) (.size slice))
-            (let [entry ^ArrayList (.get slice j)]
-              (set! total (unchecked-subtract-int total (.size entry)))
-              (.clear entry)
-              this)))))
+    (when (< (int i) (.size sliceIndex))
+      (let [slice ^ArrayList (.get sliceIndex i)]
+        (when (< (int j) (.size slice))
+          (let [entry ^ArrayList (.get slice j)]
+            (set! total (unchecked-subtract-int total (.size entry)))
+            (.clear entry)
+            this)))))
 
   (mergeIndex* [this m]
     (loop [m1 m]
@@ -759,20 +801,20 @@
       (.get sliceIndex (int i))))
   (invoke [this]
     (let [n ^int (.size sliceIndex)]
-     (loop [m (sorted-map)
-            i (int 0)]
-       (if (< i n)
-         (let [slice ^ArrayList (.get sliceIndex i)
-               s ^int (.size slice)
-               m2 (loop [m2 (sorted-map)
-                         j (int 0)]
-                    (if (< j s)
-                      (recur (assoc m2 j (count (.get slice j)))
-                             (unchecked-inc-int j))
-                      m2))]
-           (recur (assoc m i m2)
-                  (unchecked-inc-int i)))
-         m))))
+      (loop [m (sorted-map)
+             i (int 0)]
+        (if (< i n)
+          (let [slice ^ArrayList (.get sliceIndex i)
+                s ^int (.size slice)
+                m2 (loop [m2 (sorted-map)
+                          j (int 0)]
+                     (if (< j s)
+                       (recur (assoc m2 j (count (.get slice j)))
+                              (unchecked-inc-int j))
+                       m2))]
+            (recur (assoc m i m2)
+                   (unchecked-inc-int i)))
+          m))))
   (applyTo [this s]
     ;; (println "Calling applyTo: " (count s))
     (case (count s)
@@ -800,74 +842,113 @@
     (let [{forced     :forced
            jobs       :jobs
            batch-size :batch-size,
-           :or {forced false jobs 24 batch-size 250000}} opts]
+           :or {forced false jobs (- ^int pct.util.system/PhysicalCores 4) batch-size 250000}} opts]
       (timbre/info (format "Counting voxel hits: [:forced %b, :jobs %d, batch-size %d]" forced jobs batch-size))
       (if forced
         (reset-hit-counts* this))
       (when-not (counted?* this)
-        (let [from (a/chan jobs)
-              to   (a/chan jobs)]
-          ;; (a/onto-chan  from (take 100 s))
-          (a/go-loop [s (seq this)
-                      t nil
-                      start (int -1)
-                      len   (int -1)]
-            (cond
-              (nil? s)
-              (a/close! from)
+        #_(let [from (a/chan jobs)
+                to   (a/chan jobs)]
+            ;; (a/onto-chan  from (take 100 s))
+            (a/go-loop [s (seq this)
+                        t nil
+                        start (int -1)
+                        len   (int -1)]
+              (cond
+                (nil? s)
+                (a/close! from)
 
-              t
-              (let [head (take batch-size t)
-                    tail (drop batch-size t)]
-                ;; (timbre/info (format "Sending histories (1) [%d %d %d] ..." (count head) start len))
-                (if (a/>! from [head start len])
-                  (if (empty? tail)
-                    (recur (next s) nil (int -1) (int -1))
-                    (recur s tail start len))
+                t
+                (let [head (take batch-size t)
+                      tail (drop batch-size t)]
+                  ;; (timbre/info (format "Sending histories (1) [%d %d %d] ..." (count head) start len))
+                  (if (a/>! from [head start len])
+                    (if (empty? tail)
+                      (recur (next s) nil (int -1) (int -1))
+                      (recur s tail start len))
+                    (a/close! from)))
+
+                (= (count (nth (first s) 0)) 0)
+                (recur (next s) nil (int -1) (int -1))
+
+                :else
+                (let [[branch start len] (first s)
+                      head (take batch-size branch)
+                      tail (drop batch-size branch)]
+                  ;; (timbre/info (format "Sending histories (2) [%d %d %d] ..." (count head) start len))
+                  (if (a/>! from [head start len])
+                    (if (empty? tail)
+                      (recur (next s) nil (int -1) (int -1))
+                      (recur s tail start len))
+                    (a/close! from))))
+              #_(if (and s (>! from (first s)))
+                  (recur (next s))
                   (a/close! from)))
-
-              (= (count (nth (first s) 0)) 0)
-              (recur (next s) nil (int -1) (int -1))
-
-              :else
-              (let [[branch start len] (first s)
-                    head (take batch-size branch)
-                    tail (drop batch-size branch)]
-                ;; (timbre/info (format "Sending histories (2) [%d %d %d] ..." (count head) start len))
-                (if (a/>! from [head start len])
-                  (if (empty? tail)
-                    (recur (next s) nil (int -1) (int -1))
-                    (recur s tail start len))
-                  (a/close! from))))
-            #_(if (and s (>! from (first s)))
-                (recur (next s))
-                (a/close! from)))
-          (a/pipeline-async jobs to
-                            (fn [data-chunk res]
-                              (a/go (let [[data start len] data-chunk
-                                          n (count data)
-                                          _ (timbre/info (format "Start counting voxels for %d histories [%d %d]" n start len))
-                                          v-hist (voxel-count-batch data rows cols slices)]
-                                      (timbre/info (format "Finished counting voxels for %d histories" n))
-                                      (>! res [v-hist start len])
-                                      (a/close! res))))
-                            from)
-          (let [v-hits (blocking-reduce (fn [^ArrayList acc a]
-                                          (let [[^RealBlockVector v-hist ^int start ^int len] a
-                                                entry ^ArrayList (.get acc start)]
-                                            (timbre/info (format "Updating branch [%d, %d]" start len))
-                                            (when (>= len (.size entry))
-                                              (timbre/info "Sizing up the entry" start "to" (inc len))
-                                              (ensureSize entry (inc len) (fn [] nil)))
-                                            (if-let [branch ^RealBlockVector (.get entry len)]
-                                              (do (axpy! v-hist branch)
-                                                  (release v-hist))
-                                              (.set entry len v-hist))
-                                            acc))
-                                        voxel-histograms
-                                        ;; (dv (* rows cols slices))
-                                        to)]
-            (timbre/info "Voxel hit counting finished.")
+            (a/pipeline-async jobs to
+                              (fn [data-chunk res]
+                                (a/go (let [[data start len] data-chunk
+                                            n (count data)
+                                            _ (timbre/info (format "Start counting voxels for %d histories [%d %d]" n start len))
+                                            v-hist (voxel-count-batch data rows cols slices)]
+                                        (timbre/info (format "Finished counting voxels for %d histories" n))
+                                        (>! res [v-hist start len])
+                                        (a/close! res))))
+                              from)
+            (let [v-hits (blocking-reduce (fn [^ArrayList acc a]
+                                            (let [[^RealBlockVector v-hist ^int start ^int len] a
+                                                  entry ^ArrayList (.get acc start)]
+                                              (timbre/info (format "Updating branch [%d, %d]" start len))
+                                              (when (>= len (.size entry))
+                                                (timbre/info "Sizing up the entry" start "to" (inc len))
+                                                (ensureSize entry (inc len) (fn [] nil)))
+                                              (if-let [branch ^RealBlockVector (.get entry len)]
+                                                (do (axpy! v-hist branch)
+                                                    (release v-hist))
+                                                (.set entry len v-hist))
+                                              acc))
+                                          voxel-histograms
+                                          ;; (dv (* rows cols slices))
+                                          to)]
+              (timbre/info "Voxel hit counting finished.")
+              this))
+        (let [out-chs (vec (repeatedly jobs #(a/chan (int (/ (int jobs) 2)))))
+              data-ch (a/chan jobs)
+              res-ch (pct.async.threads/asyncWorkers
+                      jobs
+                      (fn [[data start-idx len]]
+                        [(voxel-count-batch data rows cols slices) start-idx len])
+                      (fn
+                        ([] voxel-histograms)
+                        ([acc] acc)
+                        ([^ArrayList acc [^RealBlockVector v-hist ^int start-idx ^int len]]
+                         (let [branch ^ArrayList (.get acc start-idx)]
+                           (timbre/info (format "Updating branch [%d, %d]" start-idx len))
+                           (when (>= len (.size branch))
+                             (timbre/info "Sizing up the branch" start-idx "to" (inc len))
+                             (ensureSize entry (inc len) (fn [] nil)))
+                           (if-let [h ^RealBlockVector (.get branch len)]
+                             (do (axpy! v-hist h)
+                                 (release v-hist))
+                             (.set branch len v-hist)))))
+                      data-ch)]
+          (let []
+            ;; dispatch
+            (loop [start-idx ^long (long 0)]
+              (if (< start-idx slices)
+                (let [branch ^ArrayList (.get sliceIndex start-idx)
+                      branch-len ^long  (long (.size sliceIndex))]
+                  (loop [len ^long (long 0)]
+                    (if (< len branch-len)
+                      (let [data  (.get branch len)
+                            parts (partition batch-size data)
+                            it    (clojure.lang.RT/iter parts)]
+                        (loop []
+                          (when (.hasNext it)
+                            (a/>!! data-ch [(.next it) start-idx len])
+                            (recur)))
+                        (recur (unchecked-inc len)))))
+                  (recur (unchecked-inc start-idx)))))
+            (a/<!! res-ch)
             this))
         #_(count-voxels voxel-histograms rows cols slices :jobs jobs :batch-size batch-size))))
 
