@@ -1,6 +1,8 @@
 (ns pct.data_api_test
-  (:use clojure.core)
+  (:use clojure.core pct.common)
   (:require pct.data pct.data.io pct.async.threads
+            [clojure.core.async :as a]
+            [com.rpl.specter :as s]
             [uncomplicate.neanderthal
              [core :refer :all]
              [block :refer [buffer contiguous?]]
@@ -10,7 +12,8 @@
              [api :as api]]
             [uncomplicate.neanderthal.internal.host
              [mkl :as mkl]]
-            [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]]))
+            [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]])
+  (:import [java.util ArrayList]))
 
 
 
@@ -44,3 +47,31 @@
 (def res (pct.data.io/load-dataset dataset_1 {:min-len 15 :batch-size 50000}))
 
 ;; read history index
+
+
+(def f (fn []
+         (let [acc ^ArrayList (ArrayList.)]
+           (fn
+             ([] acc)
+             ([x] (.add acc x))))))
+
+
+(def f1 (f))
+(def f2 (f))
+
+(f1 1)
+(f1 1)
+(f1 1)
+(f1 1)
+
+
+(f2 2)
+(f2 2)
+(f2 2)
+(f2 2)
+(f2 2)
+(f2 2)
+(f2 2)
+
+(f1)
+(f2)

@@ -520,26 +520,43 @@
 
 
 (defn random-int-array
-  "Return a random array"
+  "Return a random array
+   algorithm: Fisher-Yates shuffle"
   [^long n]
   (let [rand ^ThreadLocalRandom (ThreadLocalRandom/current)
         a ^ints (int-array n)]
     (loop [i ^long (long 1)]
-      (if (= i n)
-        a
+      (if (< i n)
         (let [j ^int (.nextInt rand (unchecked-inc i))]
           (aset a i (aget a j))
           (aset a j i)
-          (recur (unchecked-inc i)))))))
+          (recur (unchecked-inc i)))
+        a))))
+
+(defn min-max-ints [^ints a]
+  (let [len (alength a)]
+    (if (> len 0)
+      (loop [i (long 1)
+             _min ^int (aget a 0)
+             _max ^int (aget a 0)]
+        (if (< i len)
+          (let [v (aget a i)]
+            (if (< v _min)
+              (recur (unchecked-inc i) v _max)
+              (if (> v _max)
+                (recur (unchecked-inc i) _min v)
+                (recur (unchecked-inc i) _min _max))))
+          [_min _max]))
+      [])))
 
 
 (defn median-filter
   "Run meidan filter on ith slice of serialized x"
   [x i & {:keys [offset radius rows cols]
-                            :or {radius 2
-                                 offset 40000
-                                 rows 200
-                                 cols 200}}]
+          :or {radius 2
+               offset 40000
+               rows 200
+               cols 200}}]
   (let [radius (int radius)
         v (subvector x (int (* (int i) (int offset))) (int offset))
         m (view-ge v (int rows) (int cols))
