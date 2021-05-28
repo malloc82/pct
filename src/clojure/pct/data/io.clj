@@ -380,10 +380,14 @@
                       :in-stream (pct.data/newHistoryInputStream path-file b-file)
                       :x0 (pct.data.io/load-series (format "%s/x" dir)
                                                    :rows rows :cols cols :slices slices :ext "txt" :iter 0)})
-    (->PCTDataset rows cols slices path-file b-file
-                  (pct.data.io/load-series (format "%s/x" dir)
-                                           :rows rows :cols cols :slices slices :ext "txt" :iter 0)
-                  (pct.data/newHistoryInputStream path-file b-file))))
+    (try
+     (->PCTDataset rows cols slices path-file b-file
+                   (pct.data.io/load-series (format "%s/x" dir)
+                                            :rows rows :cols cols :slices slices :ext "txt" :iter 0)
+                   (pct.data/newHistoryInputStream path-file b-file))
+     (catch java.io.FileNotFoundException ex
+       (timbre/error ex "File is not found." (.getName (Thread/currentThread)))
+       (throw ex)))))
 
 
 (defn load-dataset [^PCTDataset dataset opts]
@@ -482,39 +486,14 @@
           (:ans res))
         (:ans res)))))
 
+
 (defn count-dataset-test [^PCTDataset dataset opts]
   (let [jobs       (long (or (:jobs opts) (- ^int pct.util.system/PhysicalCores 4)))
         batch-size (long (or (:batch-size opts) 20000))
         in-ch      (a/chan jobs)
         init-x     ^RealBlockVector (.x0 dataset)
         offset     (slice-offset dataset)
-        [rows cols slices] (size dataset)
-        min-max-fn (fn [^ints a]
-                     (let [len (alength a)]
-                       (if (> len 0)
-                         (loop [i (long 1)
-                                _min ^int (aget a 0)
-                                _max ^int (aget a 0)]
-                           (if (< i len)
-                             (let [v (aget a i)]
-                               (if (< v _min)
-                                 (recur (unchecked-inc i) v _max)
-                                 (if (> v _max)
-                                   (recur (unchecked-inc i) _min v)
-                                   (recur (unchecked-inc i) _min _max))))
-                             [_min _max]))
-                         [])))
-        trim-fn   (fn __trim-fn__
-                    ([src offset]
-                     (__trim-fn__ src offset false))
-                    ([^ints src offset in-place?]
-                     (let [len (alength src)
-                           dst ^ints (if in-place? src (int-array len))]
-                       (loop [i (int 0)]
-                         (if (< i len)
-                           (do (aset dst i (unchecked-subtract-int (aget src i) offset))
-                               (recur (unchecked-inc i)))
-                           dst)))))]
+        [rows cols slices] (size dataset)]
     (timbre/info (format "Loading dataset with %d workers, batch size = %d" jobs batch-size))
     (let [res-ch (pct.async.threads/asyncWorkers
                   jobs
@@ -538,3 +517,10 @@
                      (timbre/error ex "[load-dataset] Something went wrong in feeder" (.getName (Thread/currentThread)))))]
       (timbre/info (clojure.string/replace (:str res) #"[\n\"]" ""))
       (:ans res))))
+
+
+
+(defn verify-dataset
+  "Verify consistency of dataset based on given random samples"
+  [^PCTDataset dataset opts]
+  )

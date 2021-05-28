@@ -487,7 +487,7 @@
     (let [batch-size ^long batch-size]
       (loop [acc ^objects (object-array batch-size)
              i   ^long    (long 0)
-             c   ^long    index]
+             c index]
         (if-let [b (HistoryBuffer->fromStream c pis bis)]
           (do (if (< i batch-size)
                 (do (aset acc i b)
