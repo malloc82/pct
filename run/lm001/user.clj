@@ -35,10 +35,27 @@
   (println "    JVM Max Heap:   " heap)
   (println "")
 
-  (timbre/info " >>>>>>>>>>>>>>> * dev/local/user.clj loaded * <<<<<<<<<<<<<<<"  "")
+  (timbre/info " >>>>>>>>>>>>>>> * dev/lm001/user.clj loaded * <<<<<<<<<<<<<<<"  "")
   (timbre/info "    Physical Cores: " pct.util.system/PhysicalCores)
   (timbre/info "    Logical Cores:  " pct.util.system/LogicalCores)
   (timbre/info "    Max Memory:     " mem)
   (timbre/info "    JVM Max Heap:   " heap))
+
+
+(let [base-dir "datasets/data_4_Ritchie/exp_CTP404/10_24_2019"
+      f (clojure.java.io/file base-dir)]
+  (if (.isDirectory f)
+    (do (def dataset_1 (pct.data.io/newPCTDataset
+                        {:rows   200
+                         :cols   200
+                         :slices 16
+                         :dir    base-dir
+                         :path   "MLP_paths_r=1.bin"
+                         :b      "WEPL.bin"}))
+
+        (def indexed-data (pct.data.io/load-dataset dataset_1 {:min-len 50 :batch-size 70000}))
+        #_(def data-size1 (pct.data.io/count-dataset-test dataset_1 {:batch-size 100000}))
+        #_(def data-size (pct.data/count-test (.in-stream dataset_1))))
+    (timbre/info (format "Path [%s] does not exist or is not a folder." base-dir))))
 
 
