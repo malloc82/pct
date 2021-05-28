@@ -479,6 +479,7 @@
     (a/close! out-ch))
 
   (rest* [this out-ch batch-size]
+    ;; read in data as Historybuffer
     (let [batch-size ^long batch-size]
       (loop [acc ^objects (object-array batch-size)
              i   ^long    (long 0)]
@@ -487,10 +488,10 @@
             (let [new-acc ^objects (object-array batch-size)]
               (>!! out-ch acc)
               (aset new-acc 0 b)
-              (recur new-acc (long 0)))
+              (recur new-acc (long 1)))
             (do (aset acc i b)
-                (recur acc (unchecked-inc i)))))))
-    (a/close! out-ch))
+                (recur acc (unchecked-inc i))))))
+      (a/close! out-ch)))
 
   (length* [_] length)
 
@@ -890,16 +891,16 @@
                               (fn [data-chunk res]
                                 (a/go (let [[data start len] data-chunk
                                             n (count data)
-                                            _ (timbre/info (format "Start counting voxels for %d histories [%d %d]" n start len))
+                                            #_#__ (timbre/info (format "Start counting voxels for %d histories [%d %d]" n start len))
                                             v-hist (voxel-count-batch data rows cols slices)]
-                                        (timbre/info (format "Finished counting voxels for %d histories" n))
+                                        #_(timbre/info (format "Finished counting voxels for %d histories" n))
                                         (>! res [v-hist start len])
                                         (a/close! res))))
                               from)
             (let [v-hits (blocking-reduce (fn [^ArrayList acc a]
                                             (let [[^RealBlockVector v-hist ^int start ^int len] a
                                                   entry ^ArrayList (.get acc start)]
-                                              (timbre/info (format "Updating branch [%d, %d]" start len))
+                                              #_(timbre/info (format "Updating branch [%d, %d]" start len))
                                               (when (>= len (.size entry))
                                                 (timbre/info "Sizing up the entry" start "to" (inc len))
                                                 (ensureSize entry (inc len) (fn [] nil)))
@@ -922,7 +923,7 @@
                         ([] voxel-histograms)
                         ([acc] acc)
                         ([^ArrayList acc [^RealBlockVector v-hist ^int start-idx ^int len]]
-                         (timbre/info (format "Updating branch [%d, %d]" start-idx len))
+                         #_(timbre/info (format "Updating branch [%d, %d]" start-idx len))
                          (let [branch ^ArrayList (.get acc start-idx)]
                            (when (>= len (.size branch))
                              (timbre/info "Sizing up the branch" start-idx "to" (inc len))

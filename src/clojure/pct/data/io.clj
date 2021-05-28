@@ -424,6 +424,7 @@
     (let [res-ch (pct.async.threads/asyncWorkers
                   jobs
                   (fn [^objects bulk-data]
+                    ;; processing bulk HistoryBuffer into PathData
                     (let [len ^long (long (alength bulk-data))
                           acc ^HashMap (HashMap.)]
                       (loop [i (long 0)]
@@ -473,5 +474,8 @@
                      (a/close! in-ch)
                      (timbre/error ex "[load-dataset] Something went wrong in feeder" (.getName (Thread/currentThread)))))]
       (timbre/info (clojure.string/replace (:str res) #"[\n\"]" ""))
-      (pct.data/count-voxel-hits*  (:ans res) {:forced true :jobs jobs :batch-size batch-size})
-      res)))
+      (let [res (pct.common/with-out-str-data-map
+                  (time
+                   (pct.data/count-voxel-hits*  (:ans res) {:forced true :jobs jobs :batch-size 100000})))]
+        (timbre/info (clojure.string/replace (:str res) #"[\n\"]" ""))
+        (:ans res)))))
