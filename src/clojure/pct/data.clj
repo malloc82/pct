@@ -99,7 +99,8 @@
   (rest* [this] [this out-ch] [this out-ch batch] "read the remaining data to out channel")
   ;; (reset* [this]    "reset position")
   (read-PathData [this] [this out-ch] [this out-ch batch] "read data from file as pathdata directly")
-  (length* [this] ))
+  (length* [this] )
+  (count-test [this]))
 
 ;; (defprotocol IOutput
 ;;   (write* [this] [this os] "write this to os")
@@ -412,16 +413,16 @@
   ([^long id ^java.io.BufferedInputStream pis ^java.io.BufferedInputStream bis]
    (when-let [[^int length ^bytes len-buf] (read-int pis true)]
      (let [path-buf ^bytes (byte-array (* 4 length))
-           path ^ints  (int-array length)]
+           path-arr ^ints  (int-array length)]
        (-> (ByteBuffer/wrap ^bytes path-buf)
            (.order ByteOrder/LITTLE_ENDIAN)
            .asIntBuffer
-           (.get path))
+           (.get path-arr))
        (when-not (= (.read pis path-buf) -1)
          (let [[^double chord-len   _] (read-double pis true)
                [^FloatBuffer angles _] (read-floats pis 4 true)
                [^float energy       _] (read-float  bis true)]
-           (->PathData id path chord-len
+           (->PathData id path-arr chord-len
                        (.get angles 0) (.get angles 1) (.get angles 2) (.get angles 3) (float -360.0)
                        energy
                        0.0
@@ -486,14 +487,15 @@
     (let [batch-size ^long batch-size]
       (loop [acc ^objects (object-array batch-size)
              i   ^long    (long 0)]
-        (when-let [b (HistoryBuffer->fromStream index pis bis)]
-          (if (>= i batch-size)
-            (let [new-acc ^objects (object-array batch-size)]
-              (>!! out-ch acc)
-              (aset new-acc 0 b)
-              (recur new-acc (long 1)))
+        (if-let [b (HistoryBuffer->fromStream index pis bis)]
+          (if (< i batch-size)
             (do (aset acc i b)
-                (recur acc (unchecked-inc i))))))
+                (recur acc (unchecked-inc i)))
+            (let [new-acc ^objects (object-array batch-size)]
+              (>!! out-ch [i acc])
+              (aset new-acc 0 b)
+              (recur new-acc (long 1))))
+          (do (>!! out-ch [i acc]))))
       (a/close! out-ch)))
 
   (read-PathData [this]
@@ -514,16 +516,23 @@
     (let [batch-size ^long batch-size]
       (loop [acc ^objects (object-array batch-size)
              i   ^long    (long 0)]
-        (when-let [b (PathData->fromStream index pis bis)]
+        (if-let [b (PathData->fromStream index pis bis)]
           (if (< i batch-size)
             (do (aset acc i b)
                 (recur acc (unchecked-inc i)))
             (let [new-acc ^objects (object-array batch-size)]
               (>!! out-ch acc)
               (aset new-acc 0 b)
-              (recur new-acc (long 1))))))
+              (recur new-acc (long 1))))
+          (do (>!! out-ch acc))))
       (.close this)
       (a/close! out-ch)))
+
+  (count-test [this]
+    (loop [i ^long (long 0)]
+      (if-let [b (PathData->fromStream index pis bis)]
+        (recur (unchecked-inc i))
+        i)))
 
   (length* [_] length)
 
@@ -776,12 +785,12 @@
     (let [idx-it (clojure.lang.RT/iter m)]
       (loop []
         (when (.hasNext idx-it)
-          (let [[^int idx ^HashMap map-length] (.next it)
-                len-it (clojure.lang.RT/iter map-length)
+          (let [[^int idx ^HashMap length-map] (.next idx-it)
+                len-it (clojure.lang.RT/iter length-map)
                 sliceIndex-idx ^ArrayList (.get sliceIndex idx)]
             (loop []
               (when (.hasNext len-it)
-                (let [[^int len ^ArrayList data] (.next it)
+                (let [[^int len ^ArrayList data] (.next len-it)
                       sliceIndex-idx-len ^ArrayList (.get sliceIndex-idx len)]
                   (.addAll sliceIndex-idx-len data)
                   (set! total (unchecked-add-int total (.size data)))

@@ -390,6 +390,7 @@
   (let [jobs       (long (or (:jobs opts) (- ^int pct.util.system/PhysicalCores 4)))
         min-len    (long (or (:min-len opts) 0))
         batch-size (long (or (:batch-size opts) 20000))
+        count?     (boolean (or (:count opts) false))
         in-ch      (a/chan jobs)
         init-x     ^RealBlockVector (.x0 dataset)
         offset     (slice-offset dataset)
@@ -423,10 +424,9 @@
     (timbre/info (format "Loading dataset with %d workers, batch size = %d" jobs batch-size))
     (let [res-ch (pct.async.threads/asyncWorkers
                   jobs
-                  (fn [^objects bulk-data]
+                  (fn [[^long len ^objects bulk-data]]
                     ;; processing bulk HistoryBuffer into PathData
-                    (let [len ^long (long (alength bulk-data))
-                          acc ^HashMap (HashMap.)]
+                    (let [acc ^HashMap (HashMap.)]
                       (loop [i (long 0)]
                         (if (< i len)
                           (let [history ^pct.data.HistoryBuffer (aget bulk-data i)]
@@ -474,8 +474,67 @@
                      (a/close! in-ch)
                      (timbre/error ex "[load-dataset] Something went wrong in feeder" (.getName (Thread/currentThread)))))]
       (timbre/info (clojure.string/replace (:str res) #"[\n\"]" ""))
-      (let [res (pct.common/with-out-str-data-map
-                  (time
-                   (pct.data/count-voxel-hits*  (:ans res) {:forced true :jobs jobs :batch-size 100000})))]
-        (timbre/info (clojure.string/replace (:str res) #"[\n\"]" ""))
+      (if count?
+        (let [res (pct.common/with-out-str-data-map
+                    (time
+                     (pct.data/count-voxel-hits*  (:ans res) {:forced true :jobs jobs :batch-size 100000})))]
+          (timbre/info (clojure.string/replace (:str res) #"[\n\"]" ""))
+          (:ans res))
         (:ans res)))))
+
+(defn count-dataset-test [^PCTDataset dataset opts]
+  (let [jobs       (long (or (:jobs opts) (- ^int pct.util.system/PhysicalCores 4)))
+        batch-size (long (or (:batch-size opts) 20000))
+        in-ch      (a/chan jobs)
+        init-x     ^RealBlockVector (.x0 dataset)
+        offset     (slice-offset dataset)
+        [rows cols slices] (size dataset)
+        min-max-fn (fn [^ints a]
+                     (let [len (alength a)]
+                       (if (> len 0)
+                         (loop [i (long 1)
+                                _min ^int (aget a 0)
+                                _max ^int (aget a 0)]
+                           (if (< i len)
+                             (let [v (aget a i)]
+                               (if (< v _min)
+                                 (recur (unchecked-inc i) v _max)
+                                 (if (> v _max)
+                                   (recur (unchecked-inc i) _min v)
+                                   (recur (unchecked-inc i) _min _max))))
+                             [_min _max]))
+                         [])))
+        trim-fn   (fn __trim-fn__
+                    ([src offset]
+                     (__trim-fn__ src offset false))
+                    ([^ints src offset in-place?]
+                     (let [len (alength src)
+                           dst ^ints (if in-place? src (int-array len))]
+                       (loop [i (int 0)]
+                         (if (< i len)
+                           (do (aset dst i (unchecked-subtract-int (aget src i) offset))
+                               (recur (unchecked-inc i)))
+                           dst)))))]
+    (timbre/info (format "Loading dataset with %d workers, batch size = %d" jobs batch-size))
+    (let [res-ch (pct.async.threads/asyncWorkers
+                  jobs
+                  (fn [[^long len ^objects data-arr]]
+                    ;; processing bulk HistoryBuffer into PathData
+                    len)
+                  (fn
+                    ([] (long 0))
+                    ([acc] acc)
+                    ([^long acc ^long v]
+                     (unchecked-add acc v)))
+                  in-ch)
+          res (try (pct.common/with-out-str-data-map
+                     (time (do (timbre/info "Start indexing ....")
+                               (pct.data/rest* (.in-stream dataset) in-ch batch-size)
+                               (let [index (a/<!! res-ch)]
+                                 (timbre/info "Finished making index." )
+                                 index))))
+                   (catch Exception ex
+                     (a/close! in-ch)
+                     (timbre/error ex "[load-dataset] Something went wrong in feeder" (.getName (Thread/currentThread)))))]
+      (timbre/info (clojure.string/replace (:str res) #"[\n\"]" ""))
+      (:ans res))))
