@@ -917,21 +917,21 @@
               res-ch (pct.async.threads/asyncWorkers
                       jobs
                       (fn [[data start-idx len]]
-                        [#_(voxel-count-batch data rows cols slices)nil  start-idx len])
+                        [(voxel-count-batch data rows cols slices)  start-idx len])
                       (fn
                         ([] voxel-histograms)
                         ([acc] acc)
-                        ([^ArrayList acc [#_^RealBlockVector v-hist _ ^int start-idx ^int len]]
+                        ([^ArrayList acc [^RealBlockVector v-hist ^int start-idx ^int len]]
                          (timbre/info (format "Updating branch [%d, %d]" start-idx len))
-                         acc
-                         #_(let [branch ^ArrayList (.get acc start-idx)]
+                         (let [branch ^ArrayList (.get acc start-idx)]
                            (when (>= len (.size branch))
                              (timbre/info "Sizing up the branch" start-idx "to" (inc len))
                              (ensureSize entry (inc len) (fn [] nil)))
                            (if-let [h ^RealBlockVector (.get branch len)]
                              (do (axpy! v-hist h)
                                  (release v-hist))
-                             (.set branch len v-hist)))))
+                             (.set branch len v-hist))
+                           acc)))
                       data-ch)]
           (let []
             ;; dispatch
