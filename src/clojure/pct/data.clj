@@ -98,6 +98,7 @@
      If acc could be either a container or a channel")
   (rest* [this] [this out-ch] [this out-ch batch] "read the remaining data to out channel")
   ;; (reset* [this]    "reset position")
+  (read-PathData [this] [this out-ch] [this out-ch batch] "read data from file as pathdata directly")
   (length* [this] ))
 
 ;; (defprotocol IOutput
@@ -199,8 +200,10 @@
   (invoke [this i] (aget path i))
   (invoke [this] energy)
 
-  clojure.lang.IPersistentVector
+  clojure.lang.Counted
   (count [_] (alength path))
+
+  clojure.lang.IPersistentVector
   (seq [_] (aseq path (alength path) 0))
   (nth [this i] (aget path i))
   (nth [this i not-found]
@@ -493,6 +496,35 @@
                 (recur acc (unchecked-inc i))))))
       (a/close! out-ch)))
 
+  (read-PathData [this]
+    (if-let [s (PathData->fromStream index pis bis)]
+      (do (set! index (inc index))
+          s)))
+
+  (read-PathData [this out-ch]
+    (loop []
+      (when-let [b (PathData->fromStream index pis bis)]
+        (set! index (inc index))
+        (>!! out-ch b)
+        (recur)))
+    (a/close! out-ch))
+
+  (read-PathData [this out-ch batch-size]
+    ;; read in data as PathData
+    (let [batch-size ^long batch-size]
+      (loop [acc ^objects (object-array batch-size)
+             i   ^long    (long 0)]
+        (when-let [b (PathData->fromStream index pis bis)]
+          (if (< i batch-size)
+            (do (aset acc i b)
+                (recur acc (unchecked-inc i)))
+            (let [new-acc ^objects (object-array batch-size)]
+              (>!! out-ch acc)
+              (aset new-acc 0 b)
+              (recur new-acc (long 1))))))
+      (.close this)
+      (a/close! out-ch)))
+
   (length* [_] length)
 
   ICloseable
@@ -641,9 +673,11 @@
     (writeHeader* out total)
     (.close out))
 
+  clojure.lang.Counted
+  (count [_] total)
+
   clojure.lang.IPersistentVector
-  (seq [_] (list (.name out) total chunk))
-  (count [_] total))
+  (seq [_] (list (.name out) total chunk)))
 
 
 (defn newHistoryAcc [filename & {:keys [truncate chunk] :or {truncate false chunk 1000}}]
@@ -739,7 +773,21 @@
             this)))))
 
   (mergeIndex* [this m]
-    (loop [m1 m]
+    (let [idx-it (clojure.lang.RT/iter m)]
+      (loop []
+        (when (.hasNext idx-it)
+          (let [[^int idx ^HashMap map-length] (.next it)
+                len-it (clojure.lang.RT/iter map-length)
+                sliceIndex-idx ^ArrayList (.get sliceIndex idx)]
+            (loop []
+              (when (.hasNext len-it)
+                (let [[^int len ^ArrayList data] (.next it)
+                      sliceIndex-idx-len ^ArrayList (.get sliceIndex-idx len)]
+                  (.addAll sliceIndex-idx-len data)
+                  (set! total (unchecked-add-int total (.size data)))
+                  (recur))))
+            (recur)))))
+    #_(loop [m1 m]
       (when-let [[[^int s ^ArrayList m2] & rst-m1] m1]
         (let [entry ^ArrayList (.get sliceIndex s)]
           (loop [m2 m2]
@@ -984,16 +1032,16 @@
          vh ^ARrayList (ArrayList. slices) ;; voxel hits
          ]
      (dotimes [i slices]
-       (.add a  (ArrayList. ^Collection (vec (repeatedly (int (- slices i)) #(ArrayList.)))))
-       (.add vh (ArrayList. ^Collection (vec (repeat (- slices i) nil)))))
+       (.add a  (ArrayList. ^Collection (vec (repeatedly (int (inc (- slices i))) #(ArrayList.)))))
+       (.add vh (ArrayList. ^Collection (vec (repeat     (int (inc (- slices i))) nil)))))
      (->HistoryIndex a vh 0 #_(dv (* ^int rows ^int cols ^int slices)) rows cols slices)))
   ([^long rows ^long cols ^long slices]
    (let [slices ^int (int slices)
          a  ^ArrayList (ArrayList. slices)
          vh ^ARrayList (ArrayList. slices)]
      (dotimes [i slices]
-       (.add a  (ArrayList. ^Collection (vec (repeatedly (int (- slices i)) #(ArrayList.)))))
-       (.add vh (ArrayList. ^Collection (vec (repeat (- slices i) nil)))))
+       (.add a  (ArrayList. ^Collection (vec (repeatedly (int (inc (- slices i))) #(ArrayList.)))))
+       (.add vh (ArrayList. ^Collection (vec (repeat     (int (inc (- slices i))) nil)))))
      (->HistoryIndex a vh 0 #_(dv (* ^int rows ^int cols ^int slices)) rows cols slices))))
 
 
