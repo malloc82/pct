@@ -486,16 +486,18 @@
     ;; read in data as Historybuffer
     (let [batch-size ^long batch-size]
       (loop [acc ^objects (object-array batch-size)
-             i   ^long    (long 0)]
-        (if-let [b (HistoryBuffer->fromStream index pis bis)]
-          (if (< i batch-size)
-            (do (aset acc i b)
-                (recur acc (unchecked-inc i)))
-            (let [new-acc ^objects (object-array batch-size)]
-              (>!! out-ch [i acc])
-              (aset new-acc 0 b)
-              (recur new-acc (long 1))))
-          (do (>!! out-ch [i acc]))))
+             i   ^long    (long 0)
+             c   ^long    index]
+        (if-let [b (HistoryBuffer->fromStream c pis bis)]
+          (do (if (< i batch-size)
+                (do (aset acc i b)
+                    (recur acc (unchecked-inc i) (unchecked-inc c)))
+                (let [new-acc ^objects (object-array batch-size)]
+                  (>!! out-ch [i acc])
+                  (aset new-acc 0 b)
+                  (recur new-acc (long 1) (unchecked-inc c)))))
+          (do (>!! out-ch [i acc])
+              (set! index c))))
       (a/close! out-ch)))
 
   (read-PathData [this]
