@@ -148,6 +148,7 @@
                    ^float energy
                    ^double residue
                    ^{:unsynchronized-mutable true :tag HashSet} hashset]
+
   IHistory
   (get-sliceIDs* [this offset]
     (reduce #(conj %1 (quot ^long %2 ^long offset)) (sorted-set) path))
@@ -155,9 +156,10 @@
   java.lang.Comparable
   (compareTo [this o]
     (cond
-      (identical? this o) true
-      (not (instance? PathData o)) false
-      :else (compare residue (.residue ^PathData o))))
+      ;; (identical? this o) (int 0)
+      (> entry-xy ^float (.entry-xy ^PathData o)) (int  1)
+      (< entry-xy ^float (.entry-xy ^PathData o)) (int -1)
+      (= entry-xy ^float (.entry-xy ^PathData o)) (int  0)))
 
   IPathCompute
   (dot* [this x]
@@ -523,10 +525,10 @@
             (do (aset acc i b)
                 (recur acc (unchecked-inc i)))
             (let [new-acc ^objects (object-array batch-size)]
-              (>!! out-ch acc)
+              (>!! out-ch [i acc])
               (aset new-acc 0 b)
               (recur new-acc (long 1))))
-          (do (>!! out-ch acc))))
+          (do (>!! out-ch [i acc]))))
       (.close this)
       (a/close! out-ch)))
 
