@@ -143,11 +143,9 @@
     (f (-> index (.get i) (.get j)))))
 
 
-(deftype PathData [^int id ^ints path ^double chord-len
-                   ^float entry-xy ^float entry-xz ^float exit-xy ^float exit-xz ^float path-angle
-                   ^float energy
-                   ^double residue
-                   ^{:unsynchronized-mutable true :tag HashSet} hashset]
+(deftype PathData [^int id ^ints path ^double chord-len ^float energy
+                   ^float entry-xy ^float entry-xz ^float exit-xy ^float exit-xz
+                   ^HashMap properties]
 
   IHistory
   (get-sliceIDs* [this offset]
@@ -299,9 +297,9 @@
           (do
             (aset a i (.get path i))
             (recur (inc i)))
-          (->PathData id a chord-len
-                      entry-xy entry-xz exit-xy exit-xz 0.0
-                      energy -1 nil)))))
+          (->PathData id a chord-len energy
+                      entry-xy entry-xz exit-xy exit-xz
+                      (new HashMap))))))
 
   (toPathData [this x]
     (let-release [a (int-array path-length)]
@@ -315,9 +313,10 @@
                 (aset a len voxl)
                 (recur (inc i) (inc len)))))
           ;; (timbre/info "Path: " len (vec a))
-          (->PathData id (int-array len a) chord-len
-                      entry-xy entry-xz exit-xy exit-xz -360.0 ;; -360.0 means that it hasn't been calculated
-                      energy (residue* this x) nil)))))
+          (->PathData id (int-array len a) chord-len energy
+                      entry-xy entry-xz exit-xy exit-xz
+                      (doto (new HashMap)
+                        (.put :residue (residue* this x))))))))
   (toPathData [this x spec]
     (let-release [a (int-array path-length)]
       (loop [i   ^int (int 0)
@@ -350,9 +349,10 @@
                                  (<= a -180.0) (+ a 360.0)
                                  (<  a  0.0)   (+ a 180.0)
                                  :else a)))] ;; angle should range from 0 - 179 degrees
-            (->PathData id (int-array len a) chord-len
-                        entry-xy entry-xz exit-xy exit-xz path-angle
-                        energy (residue* this x) nil))))))
+            (->PathData id (int-array len a) chord-len energy
+                        entry-xy entry-xz exit-xy exit-xz
+                        (doto (new HashMap)
+                          (.put :residue (residue* this x)))))))))
   ;; (toPathData [this offset]
   ;;   (let [pd ^PathData (->PathData (int-array path-length) chord-len energy)
   ;;         a ^ints (.path pd)]
@@ -424,11 +424,9 @@
          (let [[^double chord-len   _] (read-double pis true)
                [^FloatBuffer angles _] (read-floats pis 4 true)
                [^float energy       _] (read-float  bis true)]
-           (->PathData id path-arr chord-len
-                       (.get angles 0) (.get angles 1) (.get angles 2) (.get angles 3) (float -360.0)
-                       energy
-                       0.0
-                       nil)))))))
+           (->PathData id path-arr chord-len energy
+                       (.get angles 0) (.get angles 1) (.get angles 2) (.get angles 3)
+                       (new HashMap))))))))
 
 (deftype HistoryInputStream [^java.io.BufferedInputStream pis ^java.io.BufferedInputStream bis ^long length
                              ^{:unsynchronized-mutable true :tag long} index

@@ -547,7 +547,7 @@
                 (recur (unchecked-inc i) _min v)
                 (recur (unchecked-inc i) _min _max))))
           [_min _max]))
-      [])))
+      nil)))
 
 
 (defn median-filter
