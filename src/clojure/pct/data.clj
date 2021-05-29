@@ -19,7 +19,7 @@
   (:import [java.util Arrays ArrayList Collection]
            [java.nio ByteOrder ByteBuffer IntBuffer FloatBuffer]
            [java.io FileOutputStream BufferedOutputStream RandomAccessFile File]
-           [java.util HashMap HashSet]
+           [java.util HashMap HashSet Arrays]
            java.lang.AutoCloseable
            [uncomplicate.neanderthal.internal.host.buffer_block IntegerBlockVector RealBlockVector]))
 
@@ -100,7 +100,7 @@
   ;; (reset* [this]    "reset position")
   (read-PathData [this] [this out-ch] [this out-ch batch] "read data from file as pathdata directly")
   (length* [this] )
-  (count-test [this]))
+  (count-test [this] [this m]))
 
 ;; (defprotocol IOutput
 ;;   (write* [this] [this os] "write this to os")
@@ -414,11 +414,11 @@
    (when-let [[^int length ^bytes len-buf] (read-int pis true)]
      (let [path-buf ^bytes (byte-array (* 4 length))
            path-arr ^ints  (int-array length)]
-       (-> (ByteBuffer/wrap ^bytes path-buf)
-           (.order ByteOrder/LITTLE_ENDIAN)
-           .asIntBuffer
-           (.get path-arr))
        (when-not (= (.read pis path-buf) -1)
+         (-> (ByteBuffer/wrap ^bytes path-buf)
+             (.order ByteOrder/LITTLE_ENDIAN)
+             .asIntBuffer
+             (.get path-arr))
          (let [[^double chord-len   _] (read-double pis true)
                [^FloatBuffer angles _] (read-floats pis 4 true)
                [^float energy       _] (read-float  bis true)]
@@ -532,9 +532,24 @@
 
   (count-test [this]
     (loop [i ^long (long 0)]
-      (if-let [b (PathData->fromStream index pis bis)]
+      (if-let [b (PathData->fromStream i pis bis)]
         (recur (unchecked-inc i))
         i)))
+
+  (count-test [this m]
+    (let [n (.size ^HashMap m)
+          res ^HashMap (HashMap.)]
+     (loop [i          ^long (long 0)
+            test-count ^long (long 0)]
+       (if (< test-count n)
+         (if-let [b ^PathData (PathData->fromStream i pis bis)]
+           (do (if-let [arr ^ints (.get ^HashMap m i)]
+                 (do (if (Arrays/equals arr ^ints (.path b))
+                       (.put res i true)
+                       (.put res i {:path (.path b) :sample arr}))
+                     (recur (unchecked-inc i) (unchecked-inc test-count)))
+                 (recur (unchecked-inc i) test-count))))
+         res))))
 
   (length* [_] length)
 
@@ -545,6 +560,7 @@
   java.lang.AutoCloseable
   (close [this]
     ;; (print "closing stream ... ")
+    (timbre/info "closing HistoryInputStream")
     (.close pis)
     (when bis (.close bis))
     (set! open? (boolean false))

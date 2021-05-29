@@ -12,7 +12,7 @@
              [native :refer :all]])
   (:import [java.nio ByteOrder ByteBuffer IntBuffer]
            [java.io FileOutputStream BufferedOutputStream BufferedInputStream RandomAccessFile File]
-           [java.util HashMap ArrayList]
+           [java.util HashMap ArrayList Scanner]
            [uncomplicate.neanderthal.internal.host.buffer_block IntegerBlockVector RealBlockVector]))
 
 
@@ -307,6 +307,7 @@
             (.write w (format "%s \n" (clojure.string/join " " line)))
             (recur rst)))))))
 
+
 (defn save-series [x prefix & {:keys [rows cols ext binary filename]
                                :or   {rows 200 cols 200 ext "txt" binary false}}]
   (let [length (* ^long rows ^long cols)
@@ -352,6 +353,23 @@
           (recur (unchecked-add-int offset length) (unchecked-inc-int i)))))))
 
 
+(defn load-data-sample [f]
+  (with-open [scanner ^Scanner (Scanner. (clojure.java.io/as-file f))]
+    (let [id ^long (java.lang.Long/parseLong (.nextLine scanner))
+          acc ^ArrayList (ArrayList.)]
+      (loop []
+        (when (.hasNext scanner)
+          (.add acc (java.lang.Long/parseLong (.next scanner)))
+          (recur)))
+      ;; convert to array
+      (let [n   ^long (long (.size acc))
+            arr ^ints (int-array (.size acc))]
+        (loop [i (long 0)]
+          (if (< i n)
+            (do (aset arr i (int (.get acc i)))
+                (recur (unchecked-inc i)))
+            [id arr]))))))
+
 #_(defn dumpToMatlab [file x history lambda]
   (let [f (if (instance? java.io.File file ))]))
 (defprotocol IPCTDataset
@@ -360,7 +378,8 @@
   (slice-offset [this] "get length of each slice"))
 
 (deftype PCTDataset [^long rows ^long cols ^long slices ^java.lang.String path-file ^java.lang.String b-file
-                     x0 in-stream]
+                     ^HashMap samples
+                     ^RealBlockVector x0 ^pct.data.HistoryInputStream in-stream]
   IPCTDataset
   (size  [_]  [rows cols slices])
   (files [_] {:path-file  path-file
@@ -368,7 +387,15 @@
   (slice-offset [_] (* rows cols))
 
   clojure.lang.Counted
-  (count [_] (count in-stream)))
+  (count [_] (count in-stream))
+
+  java.lang.AutoCloseable
+  (close [_]
+    (timbre/info "closing in-stream in PCTDataset")
+    (.close in-stream)))
+
+(defn test-dataset [^PCTDataset dataset]
+  (pct.data/count-test (.in-stream dataset) (.samples dataset)))
 
 (defn newPCTDataset [{:keys [rows :rows cols :cols slices :slices dir :dir path :path b :b] :as input}]
   (let [path-file (format "%s/%s" dir path)
@@ -381,13 +408,21 @@
                       :x0 (pct.data.io/load-series (format "%s/x" dir)
                                                    :rows rows :cols cols :slices slices :ext "txt" :iter 0)})
     (try
-     (->PCTDataset rows cols slices path-file b-file
-                   (pct.data.io/load-series (format "%s/x" dir)
-                                            :rows rows :cols cols :slices slices :ext "txt" :iter 0)
-                   (pct.data/newHistoryInputStream path-file b-file))
-     (catch java.io.FileNotFoundException ex
-       (timbre/error ex "File is not found." (.getName (Thread/currentThread)))
-       (throw ex)))))
+      (let [samples ^HashMap (HashMap.)]
+        (loop [i (long 0)]
+          (let [f ^java.io.File (java.io.File. (format "%s/path_%d.txt" dir i))]
+            (when (.isFile f)
+              (let [[id data] (load-data-sample f)]
+                (.put samples id data)
+                (recur (unchecked-inc i))))))
+        (->PCTDataset rows cols slices path-file b-file
+                      samples
+                      (pct.data.io/load-series (format "%s/x" dir)
+                                               :rows rows :cols cols :slices slices :ext "txt" :iter 0)
+                      (pct.data/newHistoryInputStream path-file b-file)))
+      (catch java.io.FileNotFoundException ex
+        (timbre/error ex "File is not found." (.getName (Thread/currentThread)))
+        (throw ex)))))
 
 
 (defn load-dataset [^PCTDataset dataset opts]
@@ -491,36 +526,46 @@
   (let [jobs       (long (or (:jobs opts) (- ^int pct.util.system/PhysicalCores 4)))
         batch-size (long (or (:batch-size opts) 20000))
         in-ch      (a/chan jobs)
+        threads    (boolean (or (:threads opts) false))
         init-x     ^RealBlockVector (.x0 dataset)
         offset     (slice-offset dataset)
         [rows cols slices] (size dataset)]
-    (timbre/info (format "Loading dataset with %d workers, batch size = %d" jobs batch-size))
-    (let [res-ch (pct.async.threads/asyncWorkers
-                  jobs
-                  (fn [[^long len ^objects data-arr]]
-                    ;; processing bulk HistoryBuffer into PathData
-                    len)
-                  (fn
-                    ([] (long 0))
-                    ([acc] acc)
-                    ([^long acc ^long v]
-                     (unchecked-add acc v)))
-                  in-ch)
-          res (try (pct.common/with-out-str-data-map
-                     (time (do (timbre/info "Start indexing ....")
-                               (pct.data/rest* (.in-stream dataset) in-ch batch-size)
-                               (let [index (a/<!! res-ch)]
-                                 (timbre/info "Finished making index." )
-                                 index))))
-                   (catch Exception ex
-                     (a/close! in-ch)
-                     (timbre/error ex "[load-dataset] Something went wrong in feeder" (.getName (Thread/currentThread)))))]
-      (timbre/info (clojure.string/replace (:str res) #"[\n\"]" ""))
-      (:ans res))))
 
-
+    (if threads
+      (do (timbre/info (format "Loading dataset with %d workers, batch size = %d" jobs batch-size))
+          (let [res-ch (pct.async.threads/asyncWorkers
+                        jobs
+                        (fn [[^long len ^objects data-arr]]
+                          ;; processing bulk HistoryBuffer into PathData
+                          len)
+                        (fn
+                          ([] (long 0))
+                          ([acc] acc)
+                          ([^long acc ^long v]
+                           (unchecked-add acc v)))
+                        in-ch)
+                res (try (pct.common/with-out-str-data-map
+                           (time (do (timbre/info "Start indexing ....")
+                                     (pct.data/rest* (.in-stream dataset) in-ch batch-size)
+                                     (let [index (a/<!! res-ch)]
+                                       (timbre/info "Finished making index." )
+                                       index))))
+                         (catch Exception ex
+                           (a/close! in-ch)
+                           (timbre/error ex "[load-dataset, multi threads] Something went wrong in feeder"
+                                         (.getName (Thread/currentThread)))))]
+            (timbre/info (clojure.string/replace (:str res) #"[\n\"]" ""))
+            (:ans res)))
+        (try (let [res (pct.common/with-out-str-data-map
+                         (time (pct.data/count-test (.in-stream dataset))))]
+               (timbre/info (clojure.string/replace (:str res) #"[\n\"]" ""))
+               (:ans res))
+             (catch Exception ex
+               (timbre/error ex "[load-dataset, single threads] Something went wrong in count-test."
+                             (.getName (Thread/currentThread))))))))
 
 (defn verify-dataset
   "Verify consistency of dataset based on given random samples"
   [^PCTDataset dataset opts]
   )
+
