@@ -2,6 +2,7 @@
   (:use clojure.core)
   (:require pct.util.system
             pct.data
+            pct.common
             [pct.async.threads :refer [asyncWorkers]]
             [clojure.java.io :as io]
             [clojure.string  :as s]
@@ -430,37 +431,13 @@
         min-len    (long (or (:min-len opts) 0))
         batch-size (long (or (:batch-size opts) 20000))
         count?     (boolean (or (:count opts) false))
+        global?    (or (:global? opts) true)
         style      (or (:style opts) :default)
         in-ch      (a/chan jobs)
         init-x     ^RealBlockVector (.x0 dataset)
         offset     ^long (slice-offset dataset)
         [rows cols slices] (size dataset)
-        min-max-fn (fn [^ints a]
-                     (let [len (alength a)]
-                       (if (> len 0)
-                         (loop [i (long 1)
-                                _min ^int (aget a 0)
-                                _max ^int (aget a 0)]
-                           (if (< i len)
-                             (let [v (aget a i)]
-                               (if (< v _min)
-                                 (recur (unchecked-inc i) v _max)
-                                 (if (> v _max)
-                                   (recur (unchecked-inc i) _min v)
-                                   (recur (unchecked-inc i) _min _max))))
-                             [_min _max]))
-                         [])))
-        trim-fn   (fn __trim-fn__
-                    ([src ^long offset]
-                     (__trim-fn__ src offset false))
-                    ([^ints src ^long offset in-place?]
-                     (let [len (alength src)
-                           dst ^ints (if in-place? src (int-array len))]
-                       (loop [i (int 0)]
-                         (if (< i len)
-                           (do (aset dst i (unchecked-subtract-int (aget src i) offset))
-                               (recur (unchecked-inc i)))
-                           dst)))))]
+        ]
     (timbre/info (format "Loading dataset with %d workers, batch size = %d" jobs batch-size))
     (let [res-ch (case style
                    :default (pct.async.threads/asyncWorkers
@@ -498,7 +475,7 @@
                                        (recur (unchecked-inc i)))
                                      acc))))
                              (fn
-                               ([] (pct.data/createHistoryIndex rows cols slices))
+                               ([] (pct.data/newHistoryIndex rows cols slices global?))
                                ([acc] acc)
                                ([^pct.data.HistoryIndex acc ^HashMap m]
                                 (pct.data/mergeIndex* acc m)
@@ -509,31 +486,35 @@
                             (pct.async.threads/asyncWorkers
                              jobs
                              (fn [[^long len ^objects batch]]
-                               (let [acc ^HashMap (HashMap.)]
+                               (let [acc (new HashMap)]
                                  (loop [i (long 0)]
                                    (if (< i len)
                                      (let [data ^pct.data.PathData (aget batch i)]
                                        (when (>= (count data) min-len)
-                                         (let [[^int b ^int e] (min-max-fn ^ints (.path data))
-                                               start-idx ^long (long (quot ^long b ^long offset))
-                                               end-idx   ^long (long (quot ^long e ^long offset))
-                                               len (- end-idx start-idx)]
-                                           (trim-fn (.path data) (* start-idx ^long offset) true)
+                                         (let [[^int b ^int e] (pct.common/min-max-ints ^ints (.path data))
+                                               start-idx ^long (long (quot b ^long offset))
+                                               end-idx   ^long (long (quot e ^long offset))
+                                               len (unchecked-inc (- end-idx start-idx))]
+                                           (when global?
+                                             (pct.common/trim-ints (.path data) (* start-idx ^long offset) true))
+                                           (doto ^HashMap (.properties data)
+                                             (.put :first-slice start-idx)
+                                             (.put :last-slice  end-idx))
                                            (if-let [acc-idx ^HashMap (.get acc start-idx)]
                                              (if-let [acc-idx-len ^ArrayList (.get acc-idx len)]
                                                (.add acc-idx-len data)
-                                               (let [a ^ArrayList (ArrayList.)]
+                                               (let [a  (new ArrayList)]
                                                  (.add a data)
                                                  (.put acc-idx len a)))
-                                             (let [acc-idx ^HashMap   (HashMap.)
-                                                   a       ^ArrayList (ArrayList.)]
+                                             (let [acc-idx (new HashMap)
+                                                   a       (new ArrayList)]
                                                (.add a data)
                                                (.put acc-idx len a)
                                                (.put acc start-idx acc-idx)))))
                                        (recur (unchecked-inc i)))))
                                  acc))
                              (fn
-                               ([] (pct.data/createHistoryIndex rows cols slices))
+                               ([] (pct.data/newHistoryIndex rows cols slices global?))
                                ([acc] acc)
                                ([^pct.data.HistoryIndex acc ^HashMap m]
                                 (pct.data/mergeIndex* acc m)

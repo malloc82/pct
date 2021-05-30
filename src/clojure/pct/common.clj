@@ -549,6 +549,17 @@
           [_min _max]))
       nil)))
 
+(defn trim-ints
+  ([^ints src ^long offset]
+   (trim-ints src offset false))
+  ([^ints src ^long offset in-place?]
+   (let [len (alength src)
+         dst ^ints (if in-place? src (int-array len))]
+     (loop [i (int 0)]
+       (if (< i len)
+         (do (aset dst i (unchecked-subtract-int (aget src i) offset))
+             (recur (unchecked-inc i)))
+         dst)))))
 
 (defn median-filter
   "Run meidan filter on ith slice of serialized x"
