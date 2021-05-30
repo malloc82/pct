@@ -51,15 +51,20 @@
      '())))
 
 
-(defn ^:private hist-seq [^ArrayList arr1 n ^ArrayList arr2 m i j]
+(defn ^:private hist-seq [^ArrayList a1 a1-len a1-idx
+                          ^ArrayList a2 a2-len a2-idx]
   (lazy-seq
-   (if (< ^long i ^long n)
-     (if (< ^long j ^long m)
-       (cons [(.get arr2 j) i j] (hist-seq arr1 n arr2 m i (unchecked-inc ^long j)))
-       (let [i (inc ^long i)]
-         (if (< i ^long n)
-           (let [arr3 ^ArrayList (.get ^ArrayList arr1 i)]
-             (cons [(.get arr3 0) i 0] (hist-seq arr1 n arr3 (.size arr3) i 1)))
+   (if (< ^long a1-idx ^long a1-len)
+     (if (< ^long a2-idx ^long a2-len)
+       (cons [(.get a2 a2-idx) a1-idx a2-idx]
+             (hist-seq a1 a1-len a1-idx
+                       a2 a2-len (unchecked-inc ^long a2-idx)))
+       (let [i (inc ^long a1-idx)]
+         (if (< i ^long a1-len)
+           (let [next-a ^ArrayList (.get ^ArrayList a1 i)]
+             (cons [(.get next-a 0) i 0]
+                   (hist-seq a1 a1-len i
+                             next-a (.size next-a) 1)))
            '())))
      '())))
 
@@ -126,7 +131,7 @@
   (index* [this] "return a key map")
   (summary* [this] "Print a summary for current index")
   (trimToSize* [this])
-  (branch-seq* [this]))
+  (voxel-seq* [this] "return a sequence of voxel histogram"))
 
 
 (defprotocol IVoxelHistogram
@@ -517,16 +522,17 @@
     ;; read in data as PathData
     (let [batch-size ^long batch-size]
       (loop [acc ^objects (object-array batch-size)
-             i   ^long    (long 0)]
-        (if-let [b (PathData->fromStream index pis bis)]
-          (if (< i batch-size)
-            (do (aset acc i b)
-                (recur acc (unchecked-inc i)))
+             len ^long    (long 0)
+             id  ^long    (long 0)]
+        (if-let [b (PathData->fromStream id pis bis)]
+          (if (< len batch-size)
+            (do (aset acc len b)
+                (recur acc (unchecked-inc len) (unchecked-inc id)))
             (let [new-acc ^objects (object-array batch-size)]
-              (>!! out-ch [i acc])
+              (>!! out-ch [len acc])
               (aset new-acc 0 b)
-              (recur new-acc (long 1))))
-          (do (>!! out-ch [i acc]))))
+              (recur new-acc (long 1) (unchecked-inc id))))
+          (do (>!! out-ch [len acc]))))
       (.close this)
       (a/close! out-ch)))
 
@@ -772,6 +778,51 @@
     (and (= total (count other))
          (.equals sliceIndex ^ArrayList (.sliceIndex ^HistoryIndex other))))
 
+  clojure.lang.Counted
+  (count [_] total)
+
+  clojure.lang.Seqable
+  (seq [_]
+    (let [a ^ArrayList (.get sliceIndex 0)
+          n (.size a)]
+      (hist-seq sliceIndex (.size sliceIndex) 0
+                a n 0)))
+
+  clojure.lang.IFn
+  (invoke [this i j]
+    (when (< (int i) (.size sliceIndex))
+      (let [slice ^ArrayList (.get sliceIndex i)]
+        (when (< (int j) (.size slice))
+          (.get slice j)))))
+  (invoke [this i]
+    (when (< (int i)  (.size sliceIndex))
+      (.get sliceIndex (int i))))
+  (invoke [this]
+    (let [n ^int (.size sliceIndex)]
+      (loop [m (sorted-map)
+             i (int 0)]
+        (if (< i n)
+          (let [slice ^ArrayList (.get sliceIndex i)
+                s ^int (.size slice)
+                m2 (loop [m2 (sorted-map)
+                          j (int 0)]
+                     (if (< j s)
+                       (recur (assoc m2 j (count (.get slice j)))
+                              (unchecked-inc-int j))
+                       m2))]
+            (recur (assoc m i m2)
+                   (unchecked-inc-int i)))
+          m))))
+  (applyTo [this s]
+    ;; (println "Calling applyTo: " (count s))
+    (case (count s)
+      0 (.invoke this)
+      1 (let [[a] s]
+          (.invoke this a))
+      2 (let [[a b] s]
+          (.invoke this a b))
+      (throw (UnsupportedOperationException.))))
+
   IHistoryIndex
   (addHistories* [this hist slice length]
     (ensureSize sliceIndex slice #(ArrayList.))
@@ -855,51 +906,11 @@
             (recur (unchecked-inc-int i)))
           this))))
 
-  (branch-seq* [this]
-    ())
-
-
-  clojure.lang.IPersistentVector
-  (count [_] total)
-  (seq [_]
-    (let [a ^ArrayList (.get sliceIndex 0)
-          m (.size a)]
-      (hist-seq sliceIndex (.size sliceIndex) a m 0 0)))
-
-  clojure.lang.IFn
-  (invoke [this i j]
-    (when (< (int i) (.size sliceIndex))
-      (let [slice ^ArrayList (.get sliceIndex i)]
-        (when (< (int j) (.size slice))
-          (.get slice j)))))
-  (invoke [this i]
-    (when (< (int i)  (.size sliceIndex))
-      (.get sliceIndex (int i))))
-  (invoke [this]
-    (let [n ^int (.size sliceIndex)]
-      (loop [m (sorted-map)
-             i (int 0)]
-        (if (< i n)
-          (let [slice ^ArrayList (.get sliceIndex i)
-                s ^int (.size slice)
-                m2 (loop [m2 (sorted-map)
-                          j (int 0)]
-                     (if (< j s)
-                       (recur (assoc m2 j (count (.get slice j)))
-                              (unchecked-inc-int j))
-                       m2))]
-            (recur (assoc m i m2)
-                   (unchecked-inc-int i)))
-          m))))
-  (applyTo [this s]
-    ;; (println "Calling applyTo: " (count s))
-    (case (count s)
-      0 (.invoke this)
-      1 (let [[a] s]
-          (.invoke this a))
-      2 (let [[a b] s]
-          (.invoke this a b))
-      (throw (UnsupportedOperationException.))))
+  (voxel-seq* [this]
+    (let [h ^ArrayList (.get voxel-histograms 0)
+          n (.size h)]
+      (hist-seq voxel-histograms (.size voxel-histograms) 0
+                h n 0)))
 
   IVoxelHistogram
   (reset-hit-counts* [this]
@@ -1053,22 +1064,31 @@
           (.get s j))))))
 
 
-(defn createHistoryIndex
-  ([{^long rows :rows, ^long cols :cols, ^long slices :slices, :as spec}]
+(defn newHistoryIndex
+  ([{^long rows :rows, ^long cols :cols, ^long slices :slices,  global? :global?, :as spec}]
    (let [a  ^ArrayList (ArrayList. slices) ;; index
-         vh ^ARrayList (ArrayList. slices) ;; voxel hits
-         ]
+         vh ^ArrayList (ArrayList. slices) ;; voxel hits
+         ,]
      (dotimes [i slices]
        (.add a  (ArrayList. ^Collection (vec (repeatedly (int (inc (- slices i))) #(ArrayList.)))))
-       (.add vh (ArrayList. ^Collection (vec (repeat     (int (inc (- slices i))) nil)))))
+       (.add vh (ArrayList. ^Collection (vec (if global?
+                                               (for [_ (range (inc (- slices i)))]
+                                                 (dv (* rows cols slices)))
+                                               (for [n (range (inc (- slices i)))]
+                                                 (dv (* rows cols ^long n))))))))
      (->HistoryIndex a vh 0 #_(dv (* ^int rows ^int cols ^int slices)) rows cols slices)))
   ([^long rows ^long cols ^long slices]
-   (let [slices ^int (int slices)
-         a  ^ArrayList (ArrayList. slices)
-         vh ^ARrayList (ArrayList. slices)]
+   (newHistoryIndex rows cols slices false))
+  ([^long rows ^long cols ^long slices global?]
+   (let [a  ^ArrayList (ArrayList. slices)
+         vh ^ArrayList (ArrayList. slices)]
      (dotimes [i slices]
-       (.add a  (ArrayList. ^Collection (vec (repeatedly (int (inc (- slices i))) #(ArrayList.)))))
-       (.add vh (ArrayList. ^Collection (vec (repeat     (int (inc (- slices i))) nil)))))
+       (.add a  (ArrayList. ^Collection (vec (repeatedly (inc (- slices i)) #(ArrayList.)))))
+       (.add vh (ArrayList. ^Collection (vec (if global?
+                                               (for [_ (range (inc (- slices i)))]
+                                                 (dv (* rows cols slices)))
+                                               (for [n (range (inc (- slices i)))]
+                                                 (dv (* rows cols ^long n))))))))
      (->HistoryIndex a vh 0 #_(dv (* ^int rows ^int cols ^int slices)) rows cols slices))))
 
 
