@@ -1,6 +1,7 @@
 (ns pct.data
   (:use pct.common pct.io)
   (:require pct.util.system pct.async.threads
+            [clojure.spec.alpha :as spec]
             [com.rpl.specter :as sp]
             [clojure.java [io :as io]]
             [clojure.string :as s]
@@ -19,7 +20,7 @@
   (:import [java.util Arrays ArrayList Collection]
            [java.nio ByteOrder ByteBuffer IntBuffer FloatBuffer]
            [java.io FileOutputStream BufferedOutputStream RandomAccessFile File]
-           [java.util HashMap HashSet Arrays]
+           [java.util HashMap HashSet Arrays TreeSet]
            java.lang.AutoCloseable
            [uncomplicate.neanderthal.internal.host.buffer_block IntegerBlockVector RealBlockVector]))
 
@@ -51,20 +52,35 @@
      '())))
 
 
-(defn ^:private hist-seq [^ArrayList a1 a1-len a1-idx
-                          ^ArrayList a2 a2-len a2-idx]
+(defn ^:private nested-array-seq [^ArrayList a1 a1-len a1-idx
+                                  ^ArrayList a2 a2-len a2-idx]
   (lazy-seq
+   (cons [(.get a2 a2-idx) a1-idx a2-idx]
+         (let [next-a2-idx (inc ^long a2-idx)]
+           (if (< next-a2-idx ^long a2-len)
+             (nested-array-seq a1 a1-len a1-idx
+                               a2 a2-len next-a2-idx)
+             (loop [next-a1-idx (inc ^long a1-idx)] ;; search for next entry
+               (if (< next-a1-idx ^long a1-len)
+                 (let [next-a2 ^ArrayList (.get a1 next-a1-idx)
+                       next-a2-len (.size next-a2)]
+                   (if (> next-a2-len 0)
+                     (nested-array-seq a1 a1-len next-a1-idx
+                                       next-a2 next-a2-len 0)
+                     (recur (inc next-a1-idx))))
+                 '()))))))
+  #_(lazy-seq
    (if (< ^long a1-idx ^long a1-len)
      (if (< ^long a2-idx ^long a2-len)
        (cons [(.get a2 a2-idx) a1-idx a2-idx]
-             (hist-seq a1 a1-len a1-idx
-                       a2 a2-len (unchecked-inc ^long a2-idx)))
+             (nested-array-seq a1 a1-len a1-idx
+                               a2 a2-len (unchecked-inc ^long a2-idx)))
        (let [i (inc ^long a1-idx)]
          (if (< i ^long a1-len)
            (let [next-a ^ArrayList (.get ^ArrayList a1 i)]
              (cons [(.get next-a 0) i 0]
-                   (hist-seq a1 a1-len i
-                             next-a (.size next-a) 1)))
+                   (nested-array-seq a1 a1-len i
+                                     next-a (.size next-a) 1)))
            '())))
      '())))
 
@@ -83,6 +99,8 @@
 (defprotocol IPathData
   (toPathData [this] [this x] [this x spec]))
 
+(defprotocol IPathDataInfo
+  (slices [this slice-length] [this slice-length start-idx]))
 
 (defprotocol IPathCompute
   (dot* [this x])
@@ -127,11 +145,12 @@
 (defprotocol IHistoryIndex
   (addHistories*   [this coll slice length])
   (removeHistories* [this i] [this i j])
+  (image-size* [this] "return the number of voxels of the full image.")
+  (slice-size* [this] "return the size of a slice")
   (mergeIndex*   [this m])
   (index* [this] "return a key map")
   (summary* [this] "Print a summary for current index")
-  (trimToSize* [this])
-  (voxel-seq* [this] "return a sequence of voxel histogram"))
+  (trimToSize* [this]))
 
 
 (defprotocol IVoxelHistogram
@@ -155,6 +174,17 @@
   IHistory
   (get-sliceIDs* [this offset]
     (reduce #(conj %1 (quot ^long %2 ^long offset)) (sorted-set) path))
+
+  IPathDataInfo
+  (slices [this slice-offset] (slices this slice-offset 0))
+  (slices [this slice-offset start-idx]
+    (let [len (alength path)
+          s (new TreeSet)]
+      (loop [i (long 0)]
+        (if (< i len)
+          (do (.add s (+ ^int start-idx (quot ^int (aget path i) ^int slice-offset)))
+              (recur (unchecked-inc i)))
+          s))))
 
   java.lang.Comparable
   (compareTo [this o]
@@ -767,42 +797,49 @@
 
 (def index-walker (sp/recursive-path [] p (sp/if-path #(instance? java.util.ArrayList %) [sp/ALL p] sp/STAY)))
 
-(deftype HistoryIndex [^ArrayList sliceIndex
-                       ^ArrayList voxel-histograms ;; keep track of histogram for each node on index,
-                                                   ;; so DROP could be computed independently for each block
+(deftype HistoryIndex [^ArrayList index
+                       ^int rows ^int cols ^int slices
                        ^{:unsynchronized-mutable true :tag int} total
                        ;; ^RealBlockVector voxel-histogram
-                       ^int rows ^int cols ^int slices]
+                       ^boolean global?
+                       ,]
   Object
   (equals [this other]
-    (and (= total (count other))
-         (.equals sliceIndex ^ArrayList (.sliceIndex ^HistoryIndex other))))
+    (identical? this other))
 
   clojure.lang.Counted
   (count [_] total)
 
   clojure.lang.Seqable
   (seq [_]
-    (let [a ^ArrayList (.get sliceIndex 0)
-          n (.size a)]
-      (hist-seq sliceIndex (.size sliceIndex) 0
-                a n 0)))
+    (let [len (.size index)]
+      (if (> len 0)
+        (loop [i (long 0)] ;; find the first non-empty entry
+          (if (< i len)
+            (let [a ^ArrayList (.get index i)
+                  n (.size a)]
+              (if (> n 0)
+                (nested-array-seq index (.size index) i
+                                  a n 0)
+                (recur (unchecked-inc i))))
+            '()))
+        '())))
 
   clojure.lang.IFn
   (invoke [this i j]
-    (when (< (int i) (.size sliceIndex))
-      (let [slice ^ArrayList (.get sliceIndex i)]
+    (when (< (int i) (.size index))
+      (let [slice ^ArrayList (.get index i)]
         (when (< (int j) (.size slice))
           (.get slice j)))))
   (invoke [this i]
-    (when (< (int i)  (.size sliceIndex))
-      (.get sliceIndex (int i))))
+    (when (< (int i)  (.size index))
+      (.get index (int i))))
   (invoke [this]
-    (let [n ^int (.size sliceIndex)]
+    (let [n ^int (.size index)]
       (loop [m (sorted-map)
              i (int 0)]
         (if (< i n)
-          (let [slice ^ArrayList (.get sliceIndex i)
+          (let [slice ^ArrayList (.get index i)
                 s ^int (.size slice)
                 m2 (loop [m2 (sorted-map)
                           j (int 0)]
@@ -825,16 +862,16 @@
 
   IHistoryIndex
   (addHistories* [this hist slice length]
-    (ensureSize sliceIndex slice #(ArrayList.))
-    (let [s-entry ^ArrayList (.get sliceIndex slice)]
+    (ensureSize index slice #(ArrayList.))
+    (let [s-entry ^ArrayList (.get index slice)]
       (ensureSize s-entry length #(ArrayList.))
       (let [e ^ArrayList (.get s-entry length)]
         (.addAll e hist)
         (set! total (unchecked-add-int total (count hist))))))
 
   (removeHistories* [this i]
-    (when (< (int i) (.size sliceIndex))
-      (let [slice ^ArrayList (.get sliceIndex i)
+    (when (< (int i) (.size index))
+      (let [slice ^ArrayList (.get index i)
             n ^int (reduce unchecked-add-int (int 0) (mapv #(.size ^ArrayList %) slice))]
         (set! total (unchecked-subtract-int total n))
         (.clear slice)
@@ -842,13 +879,19 @@
 
 
   (removeHistories* [this i j]
-    (when (< (int i) (.size sliceIndex))
-      (let [slice ^ArrayList (.get sliceIndex i)]
+    (when (< (int i) (.size index))
+      (let [slice ^ArrayList (.get index i)]
         (when (< (int j) (.size slice))
           (let [entry ^ArrayList (.get slice j)]
             (set! total (unchecked-subtract-int total (.size entry)))
             (.clear entry)
             this)))))
+
+  (image-size* [this]
+    (* rows cols slices))
+
+  (slice-size* [this]
+    (* rows cols))
 
   (mergeIndex* [this m]
     (let [idx-it (clojure.lang.RT/iter m)]
@@ -856,18 +899,18 @@
         (when (.hasNext idx-it)
           (let [[^int idx ^HashMap length-map] (.next idx-it)
                 len-it (clojure.lang.RT/iter length-map)
-                sliceIndex-idx ^ArrayList (.get sliceIndex idx)]
+                sliceIndex-idx ^ArrayList (.get index idx)]
             (loop []
               (when (.hasNext len-it)
                 (let [[^int len ^ArrayList data] (.next len-it)
-                      sliceIndex-idx-len ^ArrayList (.get sliceIndex-idx len)]
+                      [^ArrayList sliceIndex-idx-len _] (.get sliceIndex-idx len)]
                   (.addAll sliceIndex-idx-len data)
                   (set! total (unchecked-add-int total (.size data)))
                   (recur))))
             (recur)))))
     #_(loop [m1 m]
       (when-let [[[^int s ^ArrayList m2] & rst-m1] m1]
-        (let [entry ^ArrayList (.get sliceIndex s)]
+        (let [entry ^ArrayList (.get index s)]
           (loop [m2 m2]
             (when-let [[[^int l ^ArrayList hist] & rst-m2] m2]
               (ensureSize entry l #(ArrayList.))
@@ -877,11 +920,11 @@
         (recur rst-m1))))
 
   (summary* [this]
-    (let [N (count sliceIndex)]
+    (let [N (count index)]
       (loop [i 0]
         (when (< i N)
           (print (format "%2d : " i))
-          (let [slice ^ArrayList (.get sliceIndex i)
+          (let [slice ^ArrayList (.get index i)
                 K (count slice)]
             (loop [j 0]
               (when (< j K)
@@ -892,11 +935,11 @@
       (println "Total : " total)))
 
   (trimToSize* [this]
-    (.trimToSize sliceIndex)
-    (let [n_s ^int (.size sliceIndex)]
+    (.trimToSize index)
+    (let [n_s ^int (.size index)]
       (loop [i (int 0)]
         (if (< i n_s)
-          (let [slice ^ArrayList (.get sliceIndex i)
+          (let [slice ^ArrayList (.get index i)
                 n_l ^int (.size slice)]
             (loop [k (int 0)]
               (when (< k n_l)
@@ -906,21 +949,15 @@
             (recur (unchecked-inc-int i)))
           this))))
 
-  (voxel-seq* [this]
-    (let [h ^ArrayList (.get voxel-histograms 0)
-          n (.size h)]
-      (hist-seq voxel-histograms (.size voxel-histograms) 0
-                h n 0)))
-
   IVoxelHistogram
   (reset-hit-counts* [this]
-    (dotimes [i (.size voxel-histograms)]
-      (let [arr ^ArrayList (.get voxel-histograms i)]
-        (dotimes [j (.size arr)]
-          (.set arr j nil))))
-    nil)
+    (dotimes [i (.size index)]
+      (let [slice-idx ^ArrayList (.get index i)]
+        (dotimes [len (.size slice-idx)]
+          (let [[_ ^RealBlockVector hits] (.get slice-idx len)]
+            (alter!  hits (fn ^double [^double _] 0.0)))))))
 
-  (counted?* [_]
+  #_(counted?* [_]
     (not (every? #(every? nil? %) voxel-histograms)))
 
   (count-voxel-hits* [this] (count-voxel-hits* this {:forced false
@@ -935,137 +972,92 @@
       (timbre/info (format "Counting voxel hits: [:forced %b, :jobs %d, batch-size %d]" forced jobs batch-size))
       (if forced
         (reset-hit-counts* this))
-      (when-not (counted?* this)
-        #_(let [from (a/chan jobs)
-                to   (a/chan jobs)]
-            ;; (a/onto-chan  from (take 100 s))
-            (a/go-loop [s (seq this)
-                        t nil
-                        start (int -1)
-                        len   (int -1)]
-              (cond
-                (nil? s)
-                (a/close! from)
-
-                t
-                (let [head (take batch-size t)
-                      tail (drop batch-size t)]
-                  ;; (timbre/info (format "Sending histories (1) [%d %d %d] ..." (count head) start len))
-                  (if (a/>! from [head start len])
-                    (if (empty? tail)
-                      (recur (next s) nil (int -1) (int -1))
-                      (recur s tail start len))
-                    (a/close! from)))
-
-                (= (count (nth (first s) 0)) 0)
-                (recur (next s) nil (int -1) (int -1))
-
-                :else
-                (let [[branch start len] (first s)
-                      head (take batch-size branch)
-                      tail (drop batch-size branch)]
-                  ;; (timbre/info (format "Sending histories (2) [%d %d %d] ..." (count head) start len))
-                  (if (a/>! from [head start len])
-                    (if (empty? tail)
-                      (recur (next s) nil (int -1) (int -1))
-                      (recur s tail start len))
-                    (a/close! from))))
-              #_(if (and s (>! from (first s)))
-                  (recur (next s))
-                  (a/close! from)))
-            (a/pipeline-async jobs to
-                              (fn [data-chunk res]
-                                (a/go (let [[data start len] data-chunk
-                                            n (count data)
-                                            #_#__ (timbre/info (format "Start counting voxels for %d histories [%d %d]" n start len))
-                                            v-hist (voxel-count-batch data rows cols slices)]
-                                        #_(timbre/info (format "Finished counting voxels for %d histories" n))
-                                        (>! res [v-hist start len])
-                                        (a/close! res))))
-                              from)
-            (let [v-hits (blocking-reduce (fn [^ArrayList acc a]
-                                            (let [[^RealBlockVector v-hist ^int start ^int len] a
-                                                  entry ^ArrayList (.get acc start)]
-                                              #_(timbre/info (format "Updating branch [%d, %d]" start len))
-                                              (when (>= len (.size entry))
-                                                (timbre/info "Sizing up the entry" start "to" (inc len))
-                                                (ensureSize entry (inc len) (fn [] nil)))
-                                              (if-let [branch ^RealBlockVector (.get entry len)]
-                                                (do (axpy! v-hist branch)
-                                                    (release v-hist))
-                                                (.set entry len v-hist))
-                                              acc))
-                                          voxel-histograms
-                                          ;; (dv (* rows cols slices))
-                                          to)]
-              (timbre/info "Voxel hit counting finished.")
-              this))
-        (let [data-ch (a/chan jobs)
-              res-ch (pct.async.threads/asyncWorkers
-                      jobs
-                      (fn [[data start-idx len]]
-                        [(voxel-count-batch data rows cols slices)  start-idx len])
-                      (fn
-                        ([] voxel-histograms)
-                        ([acc] acc)
-                        ([^ArrayList acc [^RealBlockVector v-hist ^int start-idx ^int len]]
-                         #_(timbre/info (format "Updating branch [%d, %d]" start-idx len))
-                         (let [branch ^ArrayList (.get acc start-idx)]
-                           (when (>= len (.size branch))
-                             (timbre/info "Sizing up the branch" start-idx "to" (inc len))
-                             (ensureSize entry (inc len) (fn [] nil)))
-                           (if-let [h ^RealBlockVector (.get branch len)]
-                             (do (axpy! v-hist h)
-                                 (release v-hist))
-                             (.set branch len v-hist))
-                           acc)))
-                      data-ch)]
-          (let []
-            ;; dispatch
-            (try
-              (loop [start-idx ^long (long 0)]
-                (if (< start-idx slices)
-                  (let [branch ^ArrayList (.get sliceIndex start-idx)
-                        branch-len ^long  (long (.size branch))]
-                    (loop [len ^long (long 0)]
-                      (if (< len branch-len)
-                        (let [data  (.get branch len)
-                              parts (partition batch-size data)
-                              it    (clojure.lang.RT/iter parts)]
-                          (loop []
-                            (when (.hasNext it)
-                              (a/>!! data-ch [(.next it) start-idx len])
-                              (recur)))
-                          (recur (unchecked-inc len)))))
-                    (recur (unchecked-inc start-idx)))
-                  (a/close! data-ch)))
-              (catch Exception ex
-                (a/close! data-ch)
-                (timbre/error ex "[count-voxel-hits*] Something went wrong during dispatch." (.getName (Thread/currentThread)))))
-            (a/<!! res-ch)
-            this))
-        #_(count-voxels voxel-histograms rows cols slices :jobs jobs :batch-size batch-size))))
+      (let [data-ch (a/chan jobs)
+            res-ch (pct.async.threads/asyncWorkers
+                    jobs
+                    ;; workers
+                    (fn [[data start-idx len]]
+                      [(voxel-count-batch data rows cols slices)  start-idx len])
+                    ;; accumulator
+                    (fn
+                      ([] index)
+                      ([_] this)
+                      ([_ batch]
+                       #_(timbre/info (format "Updating branch [%d, %d]" start-idx len))
+                       (when-let [[^RealBlockVector v-hits ^int start-idx ^int len] batch]
+                         (when-let [[_ h] (.invoke this start-idx len)]
+                           (axpy! v-hits h)
+                           (release v-hits)))))
+                    data-ch)]
+        (let []
+          ;; dispatch
+          (try
+            (loop [start-idx ^long (long 0)]
+              (if (< start-idx slices)
+                (let [branch ^ArrayList (.get index start-idx)
+                      branch-len ^long  (long (.size branch))]
+                  (loop [len ^long (long 0)]
+                    (if (< len branch-len)
+                      (let [data  (.get branch len)
+                            parts (partition batch-size data)
+                            it    (clojure.lang.RT/iter parts)]
+                        (loop []
+                          (when (.hasNext it)
+                            (a/>!! data-ch [(.next it) start-idx len])
+                            (recur)))
+                        (recur (unchecked-inc len)))))
+                  (recur (unchecked-inc start-idx)))
+                (a/close! data-ch)))
+            (catch Exception ex
+              (a/close! data-ch)
+              (timbre/error ex "[count-voxel-hits*] Something went wrong during dispatch." (.getName (Thread/currentThread)))))
+          (a/<!! res-ch)
+          this))
+      #_(count-voxels voxel-histograms rows cols slices :jobs jobs :batch-size batch-size)))
 
 
   (getVoxelCount* [this i]
-    (when (< ^long i (.size voxel-histograms))
-      (when-let [s ^ArrayList (.get voxel-histograms i)]
-        (reduce (fn [^RealBlockVector acc ^RealBlockVector v]
-                  (if v
-                    (axpy! v acc)
-                    acc))
-                (dv (* rows cols slices))
-                s))))
+    (when (< ^long i (.size index))
+      (when-let [s ^ArrayList (.get index i)]
+        (let [n (.size s)
+              [_ h] (.invoke this i (dec n))
+              acc ^RealBlockVector (copy h)]
+          (loop [k (- n 2)]
+            (if (> k 0)
+              (let [[_ h] (.get s k)]
+                (axpy! h acc 0 (dim h) 0)
+                (recur (unchecked-dec-int k)))
+              acc))))))
 
   (getVoxelCount* [this i j]
-    (when (< ^long i (.size voxel-histograms))
-      (when-let [s ^ArrayList (.get voxel-histograms i)]
-        (when (< ^long j (.size s))
-          (.get s j))))))
+    (if-let [[_ h] (.invoke this i j)]
+      (copy h))))
 
+(defn verify-path-length [^ArrayList arr len]
+  (let [n (.size arr)]
+    (loop [i (long 0)]
+      (let [sample ^PathData (.get arr (rand-int n))
+            [begin end] (min-max-ints (.path sample))]))))
+
+(defn verify-index-structure [^HistoryIndex index global?]
+  (let [full-length  (image-size* index)
+        slice-length (slice-size* index)]
+    (loop [s (seq index)]
+      (if-let [[[^ArrayList arr ^RealBlockVector v] ^long idx ^long len] (first s)]
+        (do #_(tap> [[(if arr (.size arr)) (if v (dim v))] idx len])
+            (if (= len 0)
+              (if (and (nil? arr) (nil? v))
+                (recur (next s))
+                (throw (Exception. (format "HisotryIndex sturcture fault at [%d %d], expected nil for but got something else." idx len))))
+              (let [n (if global? full-length (* ^long slice-length  len))]
+                (if (and (instance? ArrayList arr) (= (dim v) n))
+                  (recur (next s))
+                  (throw (Exception. (format "HisotryIndex sturcture fault at [%d %d], expected hit map size to be %d, got %d."
+                                             idx len n (dim v))))))))
+        true))))
 
 (defn newHistoryIndex
-  ([{^long rows :rows, ^long cols :cols, ^long slices :slices,  global? :global?, :as spec}]
+  #_([{^long rows :rows, ^long cols :cols, ^long slices :slices,  global? :global?, :as spec}]
    (let [a  ^ArrayList (ArrayList. slices) ;; index
          vh ^ArrayList (ArrayList. slices) ;; voxel hits
          ,]
@@ -1078,20 +1070,42 @@
                                                  (dv (* rows cols ^long n))))))))
      (->HistoryIndex a vh 0 #_(dv (* ^int rows ^int cols ^int slices)) rows cols slices)))
   ([^long rows ^long cols ^long slices]
+   (newHistoryIndex rows cols slices true))
+  ([^long rows ^long cols ^long slices global?]
+   {:pre [(boolean? global?)]
+    :post [(verify-index-structure % global?)]}
+   (let [index ^ArrayList (ArrayList. slices)]
+     (if global?
+       (dotimes [i slices]
+         (.add index (ArrayList. ^Collection (mapv (fn [^long n]
+                                                     (if (= n 0)
+                                                       nil
+                                                       [(ArrayList.) (dv (* rows cols slices))]))
+                                                   (range (inc (- slices i)))))))
+       (dotimes [i slices]
+         (.add index (ArrayList. ^Collection (mapv (fn [^long n]
+                                                     (if (= n 0)
+                                                       nil
+                                                       (do #_(tap> [n (* rows cols n)])
+                                                           [(ArrayList.) (dv (* rows cols n))])))
+                                                   (range (inc (- slices i))))))))
+     (->HistoryIndex index rows cols slices (int 0) global?))))
+
+
+#_(defn newHistoryIndex
+  ([^long rows ^long cols ^long slices]
    (newHistoryIndex rows cols slices false))
   ([^long rows ^long cols ^long slices global?]
-   (let [a  ^ArrayList (ArrayList. slices)
-         vh ^ArrayList (ArrayList. slices)]
-     (dotimes [i slices]
-       (.add a  (ArrayList. ^Collection (vec (repeatedly (inc (- slices i)) #(ArrayList.)))))
-       (.add vh (ArrayList. ^Collection (vec (if global?
-                                               (for [_ (range (inc (- slices i)))]
-                                                 (dv (* rows cols slices)))
-                                               (for [n (range (inc (- slices i)))]
-                                                 (dv (* rows cols ^long n))))))))
-     (->HistoryIndex a vh 0 #_(dv (* ^int rows ^int cols ^int slices)) rows cols slices))))
-
-
+   (let [index (if global?
+                 (mapv (fn [^long i]
+                         (let [n (inc (- slices i))]
+                           (vec (repeatedly n (fn [] [(ArrayList.) (dv (* rows cols slices))])))))
+                       (range slices))
+                 (mapv (fn [^long i]
+                         (let [n (inc (- slices i))]
+                           (vec (repeatedly n (fn [] [(ArrayList.) (dv (* rows cols n))])))))
+                       (range slices)))]
+     (->HistoryIndex index rowls cols slices 0))))
 
 #_(defprotocol IHistoryIndex
     (addHistory*  [this b] "Add history to ith slice, kth entry")
@@ -1099,11 +1113,11 @@
     (mergeIndex* [this m])
     (index* [this] "return a key map"))
 
-#_(deftype HistoryIndex [^HashMap sliceIndex
+#_(deftype HistoryIndex [^HashMap index
                       ^{:unsynchronized-mutable true :tag int} total]
     Object
     (equals [this other]
-      (.equals sliceIndex ^HashMap (.sliceIndex ^HistoryIndex other)))
+      (.equals index ^HashMap (.index ^HistoryIndex other)))
 
     IHistoryIndex
     (when (empty? (.slices ^HistoryBuffer history))
@@ -1111,7 +1125,7 @@
     (when-not (empty? (.slices ^data.pct.HistoryBuffer history))
       (let [ks (sort (keys (.slices ^data.pct.HistoryBuffer history)))
             idx (first ks)]
-        (if-let [s ^HashMap (.get sliceIndex idx)]
+        (if-let [s ^HashMap (.get index idx)]
           (if-let [bs ^ArrayList (.get s (count ks))]
             (.add bs history)
             (let [a ^ArrayList (ArrayList.)]
@@ -1121,26 +1135,26 @@
                 a ^ArrayList (ArrayList.)]
             (.add a history)
             (.put m (count ks) a)
-            (.put sliceIndex (int idx) m)))
+            (.put index (int idx) m)))
         (set! total (unchecked-inc-int total))
         this))
 
     (getHistorys* [this i k]
-      (when-let [s ^HashMap (.get sliceIndex i)]
+      (when-let [s ^HashMap (.get index i)]
         (when-let [bs ^ArrayList (.get s k)]
           bs)))
 
     (mergeIndex* [this m]
-      (loop [m ^HashMap (.sliceIndex ^HistoryIndex m)]
+      (loop [m ^HashMap (.index ^HistoryIndex m)]
         (when-let [[[i ^HashMap s] & rst-m] m]
-          (if-let [slice ^HashMap (.get sliceIndex i)]
+          (if-let [slice ^HashMap (.get index i)]
             (loop [s s]
               (when-let [[[k coll] & rst-s] s]
                 (if-let [bs ^ArrayList (.get slice k)]
                   (.addAll bs coll)
                   (.put slice (int k) coll))
                 (recur rst-s)))
-            (.put sliceIndex (int i) s))
+            (.put index (int i) s))
           (recur rst-m)))
       (set! total (unchecked-add-int total (count m))))
 
@@ -1151,7 +1165,7 @@
               sliceI slices valAt [this idx] (.valAt this idx nil))
     (valAt [this idx not-found]
       (let [[s-id len] idx]
-        (if-let [s ^HashMap (.get sliceIndex (int s-id))]
+        (if-let [s ^HashMap (.get index (int s-id))]
 p          (if len
             (.getOrDefault s (int len) not-found)
             s)
