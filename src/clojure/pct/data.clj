@@ -143,12 +143,13 @@
 
 
 (defprotocol IHistoryIndex
-  (addHistories*   [this coll slice length])
-  (removeHistories* [this i] [this i j])
+  ;; (counted?* [this])
+  ;; (addHistories*   [this coll slice length])
+  ;; (removeHistories* [this i] [this i j])
   (image-size* [this] "return the number of voxels of the full image.")
   (slice-size* [this] "return the size of a slice")
   (mergeIndex*   [this m])
-  (index* [this] "return a key map")
+  ;; (index* [this] "return a key map")
   (summary* [this] "Print a summary for current index")
   (trimToSize* [this]))
 
@@ -157,7 +158,7 @@
   (reset-hit-counts* [this])
   (counted?* [this])
   (count-voxel-hits* [this] [this forced])
-  (getVoxelCount* [this i] [this i j]))
+  #_(getVoxelCount* [this i] [this i j]))
 
 #_(deftype Index [^ArrayList index]
   clojure.lang.IFn
@@ -800,9 +801,10 @@
 (deftype HistoryIndex [^ArrayList index
                        ^int rows ^int cols ^int slices
                        ^{:unsynchronized-mutable true :tag int} total
-                       ;; ^RealBlockVector voxel-histogram
+                       ^{:unsynchronized-mutable true :tag boolean} _counted?
                        ^boolean global?
                        ,]
+
   Object
   (equals [this other]
     (identical? this other))
@@ -861,31 +863,33 @@
       (throw (UnsupportedOperationException.))))
 
   IHistoryIndex
-  (addHistories* [this hist slice length]
-    (ensureSize index slice #(ArrayList.))
-    (let [s-entry ^ArrayList (.get index slice)]
-      (ensureSize s-entry length #(ArrayList.))
-      (let [e ^ArrayList (.get s-entry length)]
-        (.addAll e hist)
-        (set! total (unchecked-add-int total (count hist))))))
+  ;; (counted? [this] counted?)
 
-  (removeHistories* [this i]
-    (when (< (int i) (.size index))
-      (let [slice ^ArrayList (.get index i)
-            n ^int (reduce unchecked-add-int (int 0) (mapv #(.size ^ArrayList %) slice))]
-        (set! total (unchecked-subtract-int total n))
-        (.clear slice)
-        this)))
+  ;; (addHistories* [this hist slice length]
+  ;;   (ensureSize index slice #(ArrayList.))
+  ;;   (let [s-entry ^ArrayList (.get index slice)]
+  ;;     (ensureSize s-entry length #(ArrayList.))
+  ;;     (let [e ^ArrayList (.get s-entry length)]
+  ;;       (.addAll e hist)
+  ;;       (set! total (unchecked-add-int total (count hist))))))
+
+  ;; (removeHistories* [this i]
+  ;;   (when (< (int i) (.size index))
+  ;;     (let [slice ^ArrayList (.get index i)
+  ;;           n ^int (reduce unchecked-add-int (int 0) (mapv #(.size ^ArrayList %) slice))]
+  ;;       (set! total (unchecked-subtract-int total n))
+  ;;       (.clear slice)
+  ;;       this)))
 
 
-  (removeHistories* [this i j]
-    (when (< (int i) (.size index))
-      (let [slice ^ArrayList (.get index i)]
-        (when (< (int j) (.size slice))
-          (let [entry ^ArrayList (.get slice j)]
-            (set! total (unchecked-subtract-int total (.size entry)))
-            (.clear entry)
-            this)))))
+  ;; (removeHistories* [this i j]
+  ;;   (when (< (int i) (.size index))
+  ;;     (let [slice ^ArrayList (.get index i)]
+  ;;       (when (< (int j) (.size slice))
+  ;;         (let [entry ^ArrayList (.get slice j)]
+  ;;           (set! total (unchecked-subtract-int total (.size entry)))
+  ;;           (.clear entry)
+  ;;           this)))))
 
   (image-size* [this]
     (* rows cols slices))
@@ -958,12 +962,7 @@
           (let [[_ ^RealBlockVector hits] (.get slice-idx len)]
             (alter!  hits (fn ^double [^double _] 0.0)))))))
 
-  #_(counted?* [_]
-    (not (every? #(every? nil? %) voxel-histograms)))
-
-  (count-voxel-hits* [this] (count-voxel-hits* this {:forced false
-                                                     :jobs (- ^int pct.util.system/PhysicalCores 4)
-                                                     :batch-size 250000}))
+  (counted?* [this] )
 
   (count-voxel-hits* [this opts]
     (let [{jobs       :jobs
@@ -974,72 +973,109 @@
             res-ch (pct.async.threads/asyncWorkers
                     jobs
                     ;; workers
-                    (fn [[data-batch ^RealBlockVector hits ^int start-idx ^int len]]
-                      (let [it  (clojure.lang.RT/iter data-batch)
-                            hits ^RealBlockVector (zero hits)]
-                        (loop []
-                          (if (.hasNext it)
-                            (let [path ^PathData (.next it)
-                                  arr  ^ints     (.path ^PathData path)
-                                  alen ^int      (alength arr)]
-                              (loop [i (long 0)]
-                                (if (< i alen)
-                                  (let [idx ^int (aget arr i)
-                                        c ^double (hits idx)]
-                                    (hits idx (+ ^double c 1.0))
-                                    (recur (unchecked-inc i)))))
-                              (recur))
-                            [hits start-idx len]))))
+                    (fn [[[^ArrayList data ^long i ^long data-len] ^RealBlockVector hits ^int start-idx ^int len]]
+                      (try
+                        (let [hits ^RealBlockVector (zero hits)
+                              data-len (min (+ i ^long batch-size) data-len)]
+                          (loop [i (long i)]
+                            (if (< i data-len)
+                              (let [path ^PathData (.get data i)
+                                    arr  ^ints     (.path ^PathData path)
+                                    alen ^int      (alength arr)]
+                                (loop [j (long 0)]
+                                  (if (< j alen)
+                                    (let [idx ^int (aget arr j)
+                                          c ^double (hits idx)]
+                                      (hits idx (+ ^double c 1.0))
+                                      (recur (unchecked-inc j)))))
+                                (recur (unchecked-inc i)))
+                              [hits start-idx len]))
+                          #_(loop []
+                              (if (.hasNext it)
+                                (let [path ^PathData (.next it)
+                                      arr  ^ints     (.path ^PathData path)
+                                      alen ^int      (alength arr)]
+                                  (loop [i (long 0)]
+                                    (if (< i alen)
+                                      (let [idx ^int (aget arr i)
+                                            c ^double (hits idx)]
+                                        (hits idx (+ ^double c 1.0))
+                                        (recur (unchecked-inc i)))))
+                                  (recur))
+                                [hits start-idx len])))))
                     ;; accumulator
                     (fn
-                      ([] index)
-                      ([_] this)
-                      ([_ batch]
+                      ([] this)
+                      ([acc] acc)
+                      ([acc batch]
                        #_(timbre/info (format "Updating branch [%d, %d]" start-idx len))
-                       (when-let [[^RealBlockVector v-hits ^int start-idx ^int len] batch]
-                         (when-let [[_ h] (.invoke this start-idx len)]
-                           (axpy! v-hits h)
-                           (release v-hits)))))
+                       (if-let [[^RealBlockVector v-hits ^int start-idx ^int len] batch]
+                         (if-let [[_ h] (.invoke this start-idx len)]
+                           (do (axpy! v-hits h)
+                               #_(release v-hits))
+                           (timbre/error "Got nil, [%d, %d]" start-idx len))
+                         (timbre/error "Got nil"))
+                       acc))
                     data-ch)]
         (let []
           ;; dispatch
           (try
             (timbre/info (format "new method of voxel counting, job = %d, batch-size = %d" jobs batch-size))
             (loop [s (seq this)] ;; better loop
-              (if-let [[[data hits] ^long start-idx ^long len] (first s)]
-                (let [parts (partition-all batch-size data)
-                      it (clojure.lang.RT/iter parts)]
+              (if-let [[[^ArrayList data hits] ^long start-idx ^long len] (first s)]
+                (let [data-len (long (.size data))]
                   (alter! hits (fn ^double [^double _] 0.0)) ;; reset hit map
-                  (loop []
-                    (when (.hasNext it)
-                      (a/>!! data-ch [(.next it) hits start-idx len])
-                      (recur)))
+                  (loop [i (long 0)]
+                    (when (<  i  data-len)
+                      (a/>!! data-ch [[data i data-len] hits start-idx len])
+                      (recur (unchecked-add i ^long batch-size))))
+                  #_(loop [parts (partition-all batch-size data)]
+                    (when parts
+                      (a/>!! data-ch [(first parts) hits start-idx len])
+                      (recur (next parts))))
                   (recur (next s)))
                 (a/close! data-ch)))
             (catch Exception ex
               (a/close! data-ch)
               (timbre/error ex "[count-voxel-hits*] Something went wrong during dispatch." (.getName (Thread/currentThread)))))
           (a/<!! res-ch)
-          this))
-      #_(count-voxels voxel-histograms rows cols slices :jobs jobs :batch-size batch-size)))
+          (set! _counted? (boolean true))
+          this))))
 
 
-  (getVoxelCount* [this i]
-    (when (< ^long i (.size index))
-      (when-let [s ^ArrayList (.get index i)]
-        (let [n (.size s)
-              [_ h] (.invoke this i (dec n))
-              acc ^RealBlockVector (copy h)]
-          (loop [k (- n 2)]
-            (if (> k 0)
-              (let [[_ h] (.get s k)]
-                (axpy! h acc 0 (dim h) 0)
-                (recur (unchecked-dec-int k)))
-              acc))))))
+  ;; (getVoxelCount* [this i]
+  ;;   (when (< ^long i (.size index))
+  ;;     (when-let [s ^ArrayList (.get index i)]
+  ;;       (let [n (.size s)
+  ;;             [_ h] (.invoke this i (dec n))
+  ;;             acc ^RealBlockVector (copy h)]
+  ;;         (loop [k (- n 2)]
+  ;;           (if (> k 0)
+  ;;             (let [[_ h] (.get s k)]
+  ;;               (axpy! h acc 0 (dim h) 0)
+  ;;               (recur (unchecked-dec-int k)))
+  ;;             acc))))))
 
-  (getVoxelCount* [this i j]
-    (if-let [[_ h] (.invoke this i j)]
-      (copy h))))
+  ;; (getVoxelCount* [this i j]
+  ;;   (if-let [[_ h] (.invoke this i j)]
+  ;;     (copy h)))
+  )
+
+(defn total-voxel-hits [^HistoryIndex index method]
+  (case method
+    :pathdata (reduce + (sp/transform sp/ALL
+                                      (fn [[[data _] _ _]]
+                                        (reduce (fn ^long [^long acc p] (+ acc (count p))) 0 data))
+                                      (seq index)))
+    :hitmap (long (reduce + (sp/transform sp/ALL
+                                          (fn [[[_ hits] _ _]]
+                                            (sum hits))
+                                          (seq index))))
+    -1))
+
+(defn count-voxel-hits [^HistoryIndex index opts]
+  (count-voxel-hits* index opts))
+
 
 (defn verify-path-length [^ArrayList arr len]
   (let [n (.size arr)]
@@ -1098,7 +1134,7 @@
                                                        (do #_(tap> [n (* rows cols n)])
                                                            [(ArrayList.) (dv (* rows cols n))])))
                                                    (range (inc (- slices i))))))))
-     (->HistoryIndex index rows cols slices (int 0) global?))))
+     (->HistoryIndex index rows cols slices (int 0) false global?))))
 
 
 #_(defn newHistoryIndex

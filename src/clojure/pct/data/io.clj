@@ -432,16 +432,8 @@
    :post [(= (reduce + (spr/transform spr/ALL (fn [[[data _] & _]] (count data)) (seq %)))
              (count %))
           (if (:count? opts)
-            (= (reduce + (spr/transform spr/ALL (fn [[[data _] _ _]]
-                                                  (reduce (fn ^long [^long acc p] (+ acc (count p))) 0 data))
-                                        (seq %)))
-               (long (reduce + (spr/transform spr/ALL (fn [[[_ hits] _ _]]
-                                                        (sum hits))
-                                              (seq %)))))
-            (= (reduce + (spr/transform spr/ALL (fn [[[_ hits] _ _]]
-                                                     (sum hits))
-                                        (seq %)))
-               0.0))]}
+            (= (pct.data/total-voxel-hits % :hitmap) (pct.data/total-voxel-hits % :pathdata))
+            (= (pct.data/total-voxel-hits % :hitmap) 0))]}
   (let [jobs       (long (or (:jobs opts) (- ^int pct.util.system/PhysicalCores 4)))
         min-len    (long (or (:min-len opts) 0))
         batch-size (long (or (:batch-size opts) 20000))
@@ -551,7 +543,7 @@
       (if count?
         (let [res (pct.common/with-out-str-data-map
                     (time
-                     (pct.data/count-voxel-hits*  (:ans res) {:forced true :jobs jobs :batch-size 100000})))]
+                     (pct.data/count-voxel-hits  (:ans res) {:forced true :jobs jobs :batch-size 100000})))]
           (timbre/info (clojure.string/replace (:str res) #"[\n\"]" ""))
           (:ans res))
         (:ans res)))))
