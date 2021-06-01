@@ -895,19 +895,20 @@
 
   (mergeIndex* [this m]
     (let [idx-it (clojure.lang.RT/iter m)]
-      (loop []
-        (when (.hasNext idx-it)
+      (loop [sub-total (long 0)]
+        (if (.hasNext idx-it)
           (let [[^int idx ^HashMap length-map] (.next idx-it)
                 len-it (clojure.lang.RT/iter length-map)
                 sliceIndex-idx ^ArrayList (.get index idx)]
-            (loop []
-              (when (.hasNext len-it)
-                (let [[^int len ^ArrayList data] (.next len-it)
-                      [^ArrayList sliceIndex-idx-len _] (.get sliceIndex-idx len)]
-                  (.addAll sliceIndex-idx-len data)
-                  (set! total (unchecked-add-int total (.size data)))
-                  (recur))))
-            (recur)))))
+            (recur (loop [acc sub-total]
+                     (if (.hasNext len-it)
+                       (let [[^int len ^ArrayList data] (.next len-it)
+                             [^ArrayList sliceIndex-idx-len _] (.get sliceIndex-idx len)]
+                         (.addAll sliceIndex-idx-len data)
+                         #_(set! total (unchecked-add-int total (.size data)))
+                         (recur (unchecked-add acc (.size data))))
+                       acc))))
+          (do (set! total (unchecked-add-int total sub-total))))))
     #_(loop [m1 m]
       (when-let [[[^int s ^ArrayList m2] & rst-m1] m1]
         (let [entry ^ArrayList (.get index s)]
