@@ -430,7 +430,7 @@
   (let [jobs       (long (or (:jobs opts) (- ^int pct.util.system/PhysicalCores 4)))
         min-len    (long (or (:min-len opts) 0))
         batch-size (long (or (:batch-size opts) 20000))
-        count?     (boolean (or (:count opts) false))
+        count?     (boolean (or (:count? opts) false))
         global?    (or (:global? opts) true)
         style      (or (:style opts) :default)
         in-ch      (a/chan jobs)

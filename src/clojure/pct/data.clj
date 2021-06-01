@@ -64,9 +64,9 @@
                (if (< next-a1-idx ^long a1-len)
                  (let [next-a2 ^ArrayList (.get a1 next-a1-idx)
                        next-a2-len (.size next-a2)]
-                   (if (> next-a2-len 0)
+                   (if (> next-a2-len 1)
                      (nested-array-seq a1 a1-len next-a1-idx
-                                       next-a2 next-a2-len 0)
+                                       next-a2 next-a2-len 1)
                      (recur (inc next-a1-idx))))
                  '()))))))
   #_(lazy-seq
@@ -818,9 +818,9 @@
           (if (< i len)
             (let [a ^ArrayList (.get index i)
                   n (.size a)]
-              (if (> n 0)
+              (if (> n 1) ;;
                 (nested-array-seq index (.size index) i
-                                  a n 0)
+                                  a n 1)
                 (recur (unchecked-inc i))))
             '()))
         '())))
@@ -900,14 +900,14 @@
           (let [[^int idx ^HashMap length-map] (.next idx-it)
                 len-it (clojure.lang.RT/iter length-map)
                 sliceIndex-idx ^ArrayList (.get index idx)]
-            (recur (loop [acc sub-total]
-                     (if (.hasNext len-it)
-                       (let [[^int len ^ArrayList data] (.next len-it)
-                             [^ArrayList sliceIndex-idx-len _] (.get sliceIndex-idx len)]
-                         (.addAll sliceIndex-idx-len data)
-                         #_(set! total (unchecked-add-int total (.size data)))
-                         (recur (unchecked-add acc (.size data))))
-                       acc))))
+            (recur (long (loop [acc sub-total]
+                           (if (.hasNext len-it)
+                             (let [[^int len ^ArrayList data] (.next len-it)
+                                   [^ArrayList sliceIndex-idx-len _] (.get sliceIndex-idx len)]
+                               (.addAll sliceIndex-idx-len data)
+                               #_(set! total (unchecked-add-int total (.size data)))
+                               (recur (unchecked-add acc (.size data))))
+                             acc)))))
           (do (set! total (unchecked-add-int total sub-total))))))
     #_(loop [m1 m]
       (when-let [[[^int s ^ArrayList m2] & rst-m1] m1]
@@ -966,19 +966,30 @@
                                                      :batch-size 250000}))
 
   (count-voxel-hits* [this opts]
-    (let [{forced     :forced
-           jobs       :jobs
+    (let [{jobs       :jobs
            batch-size :batch-size,
-           :or {forced false jobs (- ^int pct.util.system/PhysicalCores 4) batch-size 250000}} opts]
-      (timbre/info (format "Counting voxel hits: [:forced %b, :jobs %d, batch-size %d]" forced jobs batch-size))
-      (if forced
-        (reset-hit-counts* this))
+           :or {jobs (- ^int pct.util.system/PhysicalCores 4) batch-size 250000}} opts]
+      (timbre/info (format "Counting voxel hits: [jobs %d, batch-size %d]" jobs batch-size))
       (let [data-ch (a/chan jobs)
             res-ch (pct.async.threads/asyncWorkers
                     jobs
                     ;; workers
-                    (fn [[data start-idx len]]
-                      [(voxel-count-batch data rows cols slices)  start-idx len])
+                    (fn [[data-batch ^RealBlockVector hits ^int start-idx ^int len]]
+                      (let [it  (clojure.lang.RT/iter data-batch)
+                            hits ^RealBlockVector (zero hits)]
+                        (loop []
+                          (if (.hasNext it)
+                            (let [path ^PathData (.next it)
+                                  arr  ^ints     (.path ^PathData path)
+                                  alen ^int      (alength arr)]
+                              (loop [i (long 0)]
+                                (if (< i alen)
+                                  (let [idx ^int (aget arr i)
+                                        c ^double (hits idx)]
+                                    (hits idx (+ ^double c 1.0))
+                                    (recur (unchecked-inc i)))))
+                              (recur))
+                            [hits start-idx len]))))
                     ;; accumulator
                     (fn
                       ([] index)
@@ -993,21 +1004,17 @@
         (let []
           ;; dispatch
           (try
-            (loop [start-idx ^long (long 0)]
-              (if (< start-idx slices)
-                (let [branch ^ArrayList (.get index start-idx)
-                      branch-len ^long  (long (.size branch))]
-                  (loop [len ^long (long 0)]
-                    (if (< len branch-len)
-                      (let [data  (.get branch len)
-                            parts (partition batch-size data)
-                            it    (clojure.lang.RT/iter parts)]
-                        (loop []
-                          (when (.hasNext it)
-                            (a/>!! data-ch [(.next it) start-idx len])
-                            (recur)))
-                        (recur (unchecked-inc len)))))
-                  (recur (unchecked-inc start-idx)))
+            (timbre/info (format "new method of voxel counting, job = %d, batch-size = %d" jobs batch-size))
+            (loop [s (seq this)] ;; better loop
+              (if-let [[[data hits] ^long start-idx ^long len] (first s)]
+                (let [parts (partition batch-size data)
+                      it (clojure.lang.RT/iter parts)]
+                  (alter! hits (fn ^double [^double _] 0.0)) ;; reset hit map
+                  (loop []
+                    (when (.hasNext it)
+                      (a/>!! data-ch [(.next it) (zero hits) start-idx len])
+                      (recur)))
+                  (recur (next s)))
                 (a/close! data-ch)))
             (catch Exception ex
               (a/close! data-ch)
@@ -1044,13 +1051,14 @@
   (let [full-length  (image-size* index)
         slice-length (slice-size* index)]
     (loop [s (seq index)]
-      (if-let [[[^ArrayList arr ^RealBlockVector v] ^long idx ^long len] (first s)]
+      (if-let [[data ^long idx ^long len] (first s)]
         (do #_(tap> [[(if arr (.size arr)) (if v (dim v))] idx len])
             (if (= len 0)
-              (if (and (nil? arr) (nil? v))
+              (if (nil? data)
                 (recur (next s))
-                (throw (Exception. (format "HisotryIndex sturcture fault at [%d %d], expected nil for but got something else." idx len))))
-              (let [n (if global? full-length (* ^long slice-length  len))]
+                (throw (Exception. (format "HisotryIndex sturcture fault at [%d %d], expected nil for but got something else: %s." idx len (class data)))))
+              (let [[^ArrayList arr ^RealBlockVector v] data
+                    n (if global? full-length (* ^long slice-length  len))]
                 (if (and (instance? ArrayList arr) (= (dim v) n))
                   (recur (next s))
                   (throw (Exception. (format "HisotryIndex sturcture fault at [%d %d], expected hit map size to be %d, got %d."
