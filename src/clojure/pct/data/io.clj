@@ -4,6 +4,7 @@
             pct.data
             pct.common
             [pct.async.threads :refer [asyncWorkers]]
+            [com.rpl.specter :as spr]
             [clojure.java.io :as io]
             [clojure.string  :as s]
             [clojure.core.async :as a :refer [>! <! >!! <!! chan]]
@@ -426,7 +427,21 @@
         (throw ex)))))
 
 
-(defn load-dataset [^PCTDataset dataset opts]
+(defn ^pct.data.HistoryIndex load-dataset [^PCTDataset dataset opts]
+  {:pre []
+   :post [(= (reduce + (spr/transform spr/ALL (fn [[[data _] & _]] (count data)) (seq %)))
+             (count %))
+          (if (:count? opts)
+            (= (reduce + (spr/transform spr/ALL (fn [[[data _] _ _]]
+                                                  (reduce (fn ^long [^long acc p] (+ acc (count p))) 0 data))
+                                        (seq %)))
+               (long (reduce + (spr/transform spr/ALL (fn [[[_ hits] _ _]]
+                                                        (sum hits))
+                                              (seq %)))))
+            (= (reduce + (spr/transform spr/ALL (fn [[[_ hits] _ _]]
+                                                     (sum hits))
+                                        (seq %)))
+               0.0))]}
   (let [jobs       (long (or (:jobs opts) (- ^int pct.util.system/PhysicalCores 4)))
         min-len    (long (or (:min-len opts) 0))
         batch-size (long (or (:batch-size opts) 20000))
@@ -438,7 +453,7 @@
         offset     ^long (slice-offset dataset)
         [rows cols slices] (size dataset)
         ]
-    (timbre/info (format "Loading dataset with %d workers, batch size = %d" jobs batch-size))
+    (timbre/info (format "Loading dataset 2 with %d workers, batch size = %d" jobs batch-size))
     (let [res-ch (case style
                    :default (pct.async.threads/asyncWorkers
                              jobs

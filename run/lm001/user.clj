@@ -52,7 +52,8 @@
                                           :dir    "datasets/data_4_Ritchie/exp_CTP404/10_24_2019"
                                           :path   "MLP_paths_r=1.bin"
                                           :b      "WEPL.bin"})]
-                      (pct.data.io/load-dataset dataset {:min-len 30 :batch-size 80000 :style :new})))
+                      (pct.data.io/load-dataset dataset {:min-len 30 :batch-size 80000 :style :new
+                                                         :count? true :global? false})))
     (timbre/info (format "Path [%s] does not exist or is not a folder." base-dir))))
 
 

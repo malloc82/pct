@@ -1007,12 +1007,12 @@
             (timbre/info (format "new method of voxel counting, job = %d, batch-size = %d" jobs batch-size))
             (loop [s (seq this)] ;; better loop
               (if-let [[[data hits] ^long start-idx ^long len] (first s)]
-                (let [parts (partition batch-size data)
+                (let [parts (partition-all batch-size data)
                       it (clojure.lang.RT/iter parts)]
                   (alter! hits (fn ^double [^double _] 0.0)) ;; reset hit map
                   (loop []
                     (when (.hasNext it)
-                      (a/>!! data-ch [(.next it) (zero hits) start-idx len])
+                      (a/>!! data-ch [(.next it) hits start-idx len])
                       (recur)))
                   (recur (next s)))
                 (a/close! data-ch)))
