@@ -438,7 +438,7 @@
         min-len    (long (or (:min-len opts) 0))
         batch-size (long (or (:batch-size opts) 20000))
         count?     (boolean (or (:count? opts) false))
-        global?    (or (:global? opts) true)
+        global?    (:global? opts)
         style      (or (:style opts) :default)
         in-ch      (a/chan jobs)
         init-x     ^RealBlockVector (.x0 dataset)
@@ -502,7 +502,7 @@
                                                start-idx ^long (long (quot b ^long offset))
                                                end-idx   ^long (long (quot e ^long offset))
                                                len (unchecked-inc (- end-idx start-idx))]
-                                           (when global?
+                                           (when (not global?)
                                              (pct.common/trim-ints (.path data) (* start-idx ^long offset) true))
                                            (doto ^HashMap (.properties data)
                                              (.put :first-slice start-idx)

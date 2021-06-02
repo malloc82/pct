@@ -1004,20 +1004,10 @@
                                       (hits idx (+ ^double c 1.0))
                                       (recur (unchecked-inc j)))))
                                 (recur (unchecked-inc i)))
-                              [hits start-idx len]))
-                          #_(loop []
-                              (if (.hasNext it)
-                                (let [path ^PathData (.next it)
-                                      arr  ^ints     (.path ^PathData path)
-                                      alen ^int      (alength arr)]
-                                  (loop [i (long 0)]
-                                    (if (< i alen)
-                                      (let [idx ^int (aget arr i)
-                                            c ^double (hits idx)]
-                                        (hits idx (+ ^double c 1.0))
-                                        (recur (unchecked-inc i)))))
-                                  (recur))
-                                [hits start-idx len])))))
+                              [hits start-idx len])))
+                        (catch Exception ex
+                          (timbre/error ex (format "[dim = %d, i = %d, start-idx = %d, len = %d]" (dim hits) i start-idx len))
+                          (throw ex))))
                     ;; accumulator
                     (fn
                       ([] this)
