@@ -828,14 +828,29 @@
         '())))
 
   clojure.lang.IFn
+  (invoke [this i j k]
+    (case (int k)
+      0 ((.invoke this i j) 0)
+      1 ((.invoke this i j) 1)
+      nil)
+    #_(case k
+        0 (when (< ^int i (.size index))
+            (let [slice ^ArrayList (.get index ^int i)]
+              (when (< ^int j (.size slice))
+                ((.get slice ^int j) 0))))
+        1 (when (< ^int i (.size index))
+            (let [slice ^ArrayList (.get index ^int i)]
+              (when (< ^int j (.size slice))
+                ((.get slice ^int j) 1))))
+        nil))
   (invoke [this i j]
-    (when (< (int i) (.size index))
-      (let [slice ^ArrayList (.get index i)]
-        (when (< (int j) (.size slice))
-          (.get slice j)))))
+    (when (< ^int i (.size index))
+      (let [slice ^ArrayList (.get index ^int i)]
+        (when (< ^int j (.size slice))
+          (.get slice ^int j)))))
   (invoke [this i]
-    (when (< (int i)  (.size index))
-      (.get index (int i))))
+    (when (< ^int i  (.size index))
+      (.get index ^int i)))
   (invoke [this]
     (let [n ^int (.size index)]
       (loop [m (sorted-map)
@@ -968,7 +983,7 @@
     (let [{jobs       :jobs
            batch-size :batch-size,
            :or {jobs (- ^int pct.util.system/PhysicalCores 4) batch-size 250000}} opts]
-      (timbre/info (format "Counting voxel hits: [jobs %d, batch-size %d]" jobs batch-size))
+      (timbre/info (format "===> Counting voxel hits: [jobs %d, batch-size %d]" jobs batch-size))
       (let [data-ch (a/chan jobs)
             res-ch (pct.async.threads/asyncWorkers
                     jobs
@@ -1012,7 +1027,7 @@
                        (if-let [[^RealBlockVector v-hits ^int start-idx ^int len] batch]
                          (if-let [[_ h] (.invoke this start-idx len)]
                            (do (axpy! v-hits h)
-                               #_(release v-hits))
+                               (release v-hits))
                            (timbre/error "Got nil, [%d, %d]" start-idx len))
                          (timbre/error "Got nil"))
                        acc))

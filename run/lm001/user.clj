@@ -1,4 +1,5 @@
 (ns user
+  (:use clojure.core)
   (:require pct.util.system
             [taoensso.timbre :as timbre]
             [clojure.core.async :as a]
@@ -18,7 +19,10 @@
             [uncomplicate.neanderthal.internal.host
              [mkl :as mkl]]
             [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]]
-            pct.common pct.data pct.data.io)
+            [pct.common :refer [prime]]
+            [pct.data.util :refer :all]
+            pct.data
+            pct.data.io)
   (:import [java.util ArrayList HashMap]))
 
 ;; (set! *warn-on-reflection* true)
@@ -57,3 +61,14 @@
     (timbre/info (format "Path [%s] does not exist or is not a folder." base-dir))))
 
 
+
+
+;; (def maps [{:a "Example1" :b {:c "Example2" :id 1}}
+;;  	       {:a "Example3" :b {:c "Example4" :id 2}}
+;; 	       {:a "Example5" :b {:c "Example6" :id 3}}])
+
+;; (spr/select [spr/ALL (fn [x] (= (-> x :b :id) 1))] maps)
+;; (spr/transform [spr/ALL spr/MAP-VALS #(:c %)]
+;;                (fn [x] (if (= (:id x) 2)
+;;                         (assoc x :c "new str")
+;;                         x)) maps)

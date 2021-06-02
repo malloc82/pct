@@ -244,6 +244,11 @@
   ([^long n ^ArrayList plist]
    (every? #(not= (rem n ^long %) 0) plist)))
 
+(defn prime
+  "Returns largest prime smaller than n"
+  [^long n]
+  (let [plist ^ArrayList (prime-seq4 n)]
+    (.get plist (unchecked-dec (.size plist)))))
 
 (defn- prime-seq1
   [^long n] ;; looking for prime number within [2, n]

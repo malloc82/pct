@@ -427,7 +427,7 @@
         (throw ex)))))
 
 
-(defn ^pct.data.HistoryIndex load-dataset [^PCTDataset dataset opts]
+(defn load-dataset ^pct.data.HistoryIndex [^PCTDataset dataset opts]
   {:pre []
    :post [(= (reduce + (spr/transform spr/ALL (fn [[[data _] & _]] (count data)) (seq %)))
              (count %))
