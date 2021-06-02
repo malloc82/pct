@@ -1,0 +1,7 @@
+#!/bin/bash
+
+export MKL_NUM_THREADS="4"
+export MKL_DOMAIN_NUM_THREADS="MKL_BLAS=4"
+export OMP_NUM_THREADS="1"
+export MKL_DYNAMIC="FALSE"
+export OMP_DYNAMIC="FALSE"
