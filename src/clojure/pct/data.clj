@@ -1193,18 +1193,6 @@
         true))))
 
 (defn newHistoryIndex
-  #_([{^long rows :rows, ^long cols :cols, ^long slices :slices,  global? :global?, :as spec}]
-   (let [a  ^ArrayList (ArrayList. slices) ;; index
-         vh ^ArrayList (ArrayList. slices) ;; voxel hits
-         ,]
-     (dotimes [i slices]
-       (.add a  (ArrayList. ^Collection (vec (repeatedly (int (inc (- slices i))) #(ArrayList.)))))
-       (.add vh (ArrayList. ^Collection (vec (if global?
-                                               (for [_ (range (inc (- slices i)))]
-                                                 (dv (* rows cols slices)))
-                                               (for [n (range (inc (- slices i)))]
-                                                 (dv (* rows cols ^long n))))))))
-     (->HistoryIndex a vh 0 #_(dv (* ^int rows ^int cols ^int slices)) rows cols slices)))
   (^HistoryIndex [rows cols slices & {:keys [global? x0]}]
    {:pre [(int? rows) (int? cols) (int? slices)
           (or (nil? x0)
@@ -1235,89 +1223,4 @@
                      (if x0 (copy x0) (dv (* rows cols slices)))))))
 
 
-#_(defn newHistoryIndex
-  ([^long rows ^long cols ^long slices]
-   (newHistoryIndex rows cols slices false))
-  ([^long rows ^long cols ^long slices global?]
-   (let [index (if global?
-                 (mapv (fn [^long i]
-                         (let [n (inc (- slices i))]
-                           (vec (repeatedly n (fn [] [(ArrayList.) (dv (* rows cols slices))])))))
-                       (range slices))
-                 (mapv (fn [^long i]
-                         (let [n (inc (- slices i))]
-                           (vec (repeatedly n (fn [] [(ArrayList.) (dv (* rows cols n))])))))
-                       (range slices)))]
-     (->HistoryIndex index rowls cols slices 0))))
-
-#_(defprotocol IHistoryIndex
-    (addHistory*  [this b] "Add history to ith slice, kth entry")
-    (getHistorys* [this i k])
-    (mergeIndex* [this m])
-    (index* [this] "return a key map"))
-
-#_(deftype HistoryIndex [^HashMap index
-                      ^{:unsynchronized-mutable true :tag int} total]
-    Object
-    (equals [this other]
-      (.equals index ^HashMap (.index ^HistoryIndex other)))
-
-    IHistoryIndex
-    (when (empty? (.slices ^HistoryBuffer history))
-      (tag-sliceIDs* ^HistoryBuffer history 40000))
-    (when-not (empty? (.slices ^data.pct.HistoryBuffer history))
-      (let [ks (sort (keys (.slices ^data.pct.HistoryBuffer history)))
-            idx (first ks)]
-        (if-let [s ^HashMap (.get index idx)]
-          (if-let [bs ^ArrayList (.get s (count ks))]
-            (.add bs history)
-            (let [a ^ArrayList (ArrayList.)]
-              (.add a history)
-              (.put s (count ks) a)))
-          (let [m ^HashMap (HashMap.)
-                a ^ArrayList (ArrayList.)]
-            (.add a history)
-            (.put m (count ks) a)
-            (.put index (int idx) m)))
-        (set! total (unchecked-inc-int total))
-        this))
-
-    (getHistorys* [this i k]
-      (when-let [s ^HashMap (.get index i)]
-        (when-let [bs ^ArrayList (.get s k)]
-          bs)))
-
-    (mergeIndex* [this m]
-      (loop [m ^HashMap (.index ^HistoryIndex m)]
-        (when-let [[[i ^HashMap s] & rst-m] m]
-          (if-let [slice ^HashMap (.get index i)]
-            (loop [s s]
-              (when-let [[[k coll] & rst-s] s]
-                (if-let [bs ^ArrayList (.get slice k)]
-                  (.addAll bs coll)
-                  (.put slice (int k) coll))
-                (recur rst-s)))
-            (.put index (int i) s))
-          (recur rst-m)))
-      (set! total (unchecked-add-int total (count m))))
-
-    (index* [this]
-      (reduce (fn [acc [k s]]
-                (assoc acc k (into (sorted-set slices) (keys s))))
-              (sorted-map)
-              sliceI slices valAt [this idx] (.valAt this idx nil))
-    (valAt [this idx not-found]
-      (let [[s-id len] idx]
-        (if-let [s ^HashMap (.get index (int s-id))]
-p          (if len
-            (.getOrDefault s (int len) not-found)
-            s)
-          not-found)))
-    clojure.lang.IPersistentMap
-    (count [this] total)
-    (containsKey [this ks]
-      (if (.valAt this ks) true false))))
-
-#_(defn createHistoryIndex []
-  (HistoryIndex. (HashMap.) 0))
 
