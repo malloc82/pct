@@ -438,7 +438,7 @@
         min-len    (long (or (:min-len opts) 0))
         batch-size (long (or (:batch-size opts) 20000))
         count?     (boolean (or (:count? opts) false))
-        global?    (:global? opts)
+        global?    (if (:global? opts) true false)
         style      (or (:style opts) :default)
         in-ch      (a/chan jobs)
         init-x     ^RealBlockVector (.x0 dataset)
@@ -521,7 +521,7 @@
                                        (recur (unchecked-inc i)))))
                                  acc))
                              (fn
-                               ([] (pct.data/newHistoryIndex rows cols slices global?))
+                               ([] (pct.data/newHistoryIndex rows cols slices :global? global? :x0 init-x))
                                ([acc] acc)
                                ([^pct.data.HistoryIndex acc ^HashMap m]
                                 (pct.data/mergeIndex* acc m)

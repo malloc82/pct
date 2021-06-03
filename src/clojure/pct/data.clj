@@ -104,8 +104,12 @@
 
 (defprotocol IPathCompute
   (dot* [this x])
+  (dot-2* [this x])
   (residue*   [this x])
-  (proj_art*  [this x lambda])
+  (proj_art-1*  [this x lambda])
+  (proj_art-2*  [this x lambda])
+  (proj_art-3*  [this x lambda])
+  (proj_art-4*  [this x lambda])
   (proj_drop* [this x lambda hit-map]))
 
 (defprotocol IPathAccess
@@ -149,6 +153,7 @@
   (image-size* [this] "return the number of voxels of the full image.")
   (slice-size* [this] "return the size of a slice")
   (mergeIndex*   [this m])
+  (set-x0* [this x])
   ;; (index* [this] "return a key map")
   (summary* [this] "Print a summary for current index")
   (trimToSize* [this]))
@@ -198,18 +203,26 @@
   IPathCompute
   (dot* [this x]
     (let [n ^int (alength path)]
-      (loop [i (int 0)
+      (loop [i (long 0)
              sum (double 0.0)]
         (if (< i n)
-          (recur (unchecked-inc-int i) (unchecked-add sum ^double (x (aget path i))))
-          (unchecked-multiply sum chord-len)))))
+          (recur (unchecked-inc i) (+ sum ^double (.entry ^RealBlockVector x (aget path i))))
+          sum))))
+
+  (dot-2* [this x]
+    (let [n ^int (alength path)]
+      (loop [i (long 0)
+             sum (double 0.0)]
+        (if (< i n)
+          (recur (unchecked-inc i) (+ sum ^double (aget ^doubles x (aget path i))))
+          sum))))
 
   (residue* [this x]
-    (- ^double (dot* this x) (double energy)))
+    (- ^double (dot* this x) (/ (double energy) chord-len)))
 
-  (proj_art* [this x lambda]
+  (proj_art-1* [this x lambda]
     (let [n ^int (alength path)
-          a ^double (* ^double lambda (/ (- energy ^double (dot* this x))
+          a ^double (* ^double lambda (/ (- energy (* ^double (dot* this x) chord-len))
                                          (* n chord-len)))]
       (loop [k (int 0)]
         (if (< k n)
@@ -217,6 +230,73 @@
                 xi (double (x i))]
             (if (not= xi 0.0)
               (x i (+ xi a)))
+            (recur (unchecked-inc-int k)))
+          x))))
+
+  (proj_art-2* [this x lambda]
+    (let [n ^int (alength path)
+          a ^double (* ^double lambda (/ (- (/ energy chord-len) ^double (dot* this x))
+                                         n ))]
+      (loop [k (int 0)]
+        (if (< k n)
+          (let [i ^int (aget path k)
+                xi (double (x i))]
+            (if (not= xi 0.0)
+              (x i (+ xi a)))
+            (recur (unchecked-inc-int k)))
+          x))))
+
+  ;; second fastest
+  (proj_art-3* [this x lambda]
+    (let [n ^int (alength path)
+          a ^double (* ^double lambda (/ (- (/ energy chord-len) ^double (dot* this x))
+                                         n ))]
+      (loop [k (long 0)]
+        (if (< k n)
+          (let [i ^int (aget path k)
+                xi ^double (.entry ^RealBlockVector x i)
+                next-k (unchecked-inc k)]
+            (if (= xi 0.0)
+              (recur next-k)
+              (do (.set ^RealBlockVector x i (+ xi a))
+                  (recur next-k))))
+          x))))
+
+  ;; Using double array seems to be the fastest so far
+  (proj_art-4* [this x lambda]
+    (let [n ^int (alength path)
+          a ^double (* ^double lambda (/ (- (/ energy chord-len) ^double (dot-2* this x))
+                                         n ))]
+      (loop [k (long 0)]
+        (if (< k n)
+          (let [i ^int (aget path k)
+                xi ^double (aget ^doubles x i)
+                next-k (unchecked-inc k)]
+            (if (= xi 0.0)
+              (recur next-k)
+              (do (aset ^doubles x i (+ xi a))
+                  (recur next-k))))
+          x))))
+
+  #_(proj_art-3* [this x lambda]
+      (let [n ^int (alength path)
+            a ^double (* ^double lambda (/ (- (/ energy chord-len) ^double (dot* this x))
+                                           n ))
+            f (fn ^double [^double v] (if (= v 0.0) 0.0 (+ v a)))]
+        (loop [k (int 0)]
+          (if (< k n)
+            (do (alter! ^RealBlockVector x ^int (aget path k) f)
+                (recur (unchecked-inc-int k)))
+            x))))
+
+  #_(proj_art-4* [this x lambda]
+    (let [n ^int (alength path)
+          a ^double (* ^double lambda (/ (- (/ energy chord-len) ^double (dot* this x))
+                                         n ))]
+      (loop [k (int 0)]
+        (if (< k n)
+          (let [i ^int (aget path k)]
+            (alter! ^RealBlockVector x i (fn ^double [^double v] (if (= v 0.0) 0.0 (+ v a))))
             (recur (unchecked-inc-int k)))
           x))))
 
@@ -803,6 +883,7 @@
                        ^{:unsynchronized-mutable true :tag int} total
                        ^{:unsynchronized-mutable true :tag boolean} _counted?
                        ^boolean global?
+                       ^RealBlockVector x0
                        ,]
 
   Object
@@ -875,6 +956,8 @@
           (.invoke this a))
       2 (let [[a b] s]
           (.invoke this a b))
+      3 (let [[a b c] s]
+          (.invoke this a b c))
       (throw (UnsupportedOperationException.))))
 
   IHistoryIndex
@@ -938,6 +1021,9 @@
               (set! total (unchecked-add-int total (count hist)))
               (recur rst-m2))))
         (recur rst-m1))))
+
+  (set-x0* [this x]
+    (copy! ^RealBlockVector x x0))
 
   (summary* [this]
     (let [N (count index)]
@@ -1119,12 +1205,17 @@
                                                (for [n (range (inc (- slices i)))]
                                                  (dv (* rows cols ^long n))))))))
      (->HistoryIndex a vh 0 #_(dv (* ^int rows ^int cols ^int slices)) rows cols slices)))
-  ([^long rows ^long cols ^long slices]
-   (newHistoryIndex rows cols slices true))
-  ([^long rows ^long cols ^long slices global?]
-   {:pre [(boolean? global?)]
+  (^HistoryIndex [rows cols slices & {:keys [global? x0]}]
+   {:pre [(int? rows) (int? cols) (int? slices)
+          (or (nil? x0)
+              (and (instance? RealBlockVector x0)
+                   (= (dim x0) (* ^int rows ^int cols ^int slices))))]
     :post [(verify-index-structure % global?)]}
-   (let [index ^ArrayList (ArrayList. slices)]
+   (let [rows   ^long rows
+         cols   ^long cols
+         slices ^long slices
+         index ^ArrayList (ArrayList. slices)]
+
      (if global?
        (dotimes [i slices]
          (.add index (ArrayList. ^Collection (mapv (fn [^long n]
@@ -1139,7 +1230,9 @@
                                                        (do #_(tap> [n (* rows cols n)])
                                                            [(ArrayList.) (dv (* rows cols n))])))
                                                    (range (inc (- slices i))))))))
-     (->HistoryIndex index rows cols slices (int 0) false global?))))
+     (->HistoryIndex index rows cols slices (int 0) false
+                     (if global? true false)
+                     (if x0 (copy x0) (dv (* rows cols slices)))))))
 
 
 #_(defn newHistoryIndex
