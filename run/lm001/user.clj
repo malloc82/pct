@@ -23,6 +23,7 @@
             [pct.data.util :refer :all]
             pct.data
             pct.data.io
+            pct.async.node
             [pct.reconstruction :as recon])
   (:import [java.util ArrayList HashMap]))
 
@@ -62,7 +63,8 @@
                  :x0 (.x0 dataset)}))
     (timbre/info (format "Path [%s] does not exist or is not a folder." base-dir))))
 
-
+(def grid (pct.async.node/newAsyncGrid 16 5 true))
+(time (def image (recon/async-art grid (:index data) (:x0 data) 6)))
 
 
 ;; (def maps [{:a "Example1" :b {:c "Example2" :id 1}}
