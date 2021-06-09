@@ -165,13 +165,6 @@
   (count-voxel-hits* [this] [this forced])
   #_(getVoxelCount* [this i] [this i j]))
 
-#_(deftype Index [^ArrayList index]
-  clojure.lang.IFn
-  (invoke [this i j]
-    (-> index (.get i) (.get j)))
-  (invoke [this i j f]
-    (f (-> index (.get i) (.get j)))))
-
 
 (deftype PathData [^int id ^ints path ^double chord-len ^float energy
                    ^float entry-xy ^float entry-xz ^float exit-xy ^float exit-xz
@@ -206,7 +199,7 @@
       (loop [i (long 0)
              sum (double 0.0)]
         (if (< i n)
-          (recur (unchecked-inc i) (+ sum ^double (.entry ^RealBlockVector x (aget path i))))
+          (recur (unchecked-inc i) (+ sum ^double (.entry ^RealBlockVector x ^int (aget path i))))
           sum))))
 
   (dot-2* [this x]
@@ -214,7 +207,7 @@
       (loop [i (long 0)
              sum (double 0.0)]
         (if (< i n)
-          (recur (unchecked-inc i) (+ sum ^double (aget ^doubles x (aget path i))))
+          (recur (unchecked-inc i) (+ sum ^double (aget ^doubles x ^int (aget path i))))
           sum))))
 
   (residue* [this x]
@@ -271,10 +264,11 @@
         (if (< k n)
           (let [i ^int (aget path k)
                 xi ^double (aget ^doubles x i)
+                v  (unchecked-add xi a)
                 next-k (unchecked-inc k)]
             (if (= xi 0.0)
               (recur next-k)
-              (do (aset ^doubles x i (+ xi a))
+              (do (aset ^doubles x i v)
                   (recur next-k))))
           x))))
 
@@ -349,177 +343,6 @@
   (iterator [_] (clojure.lang.SeqIterator. (aseq path (alength path) 0))))
 
 
-(deftype HistoryBuffer [^int id
-                        ^int path-length ^IntBuffer path
-                        ^double chord-len ^float entry-xy ^float entry-xz ^float exit-xy ^float exit-xz
-                        ^float energy
-                        ^bytes len-buf ^bytes path-buf ^bytes chord-len-buf ^bytes angle-buf ^bytes e-buf
-                        ^HashMap slices]
-  Object
-  (equals [this o]
-    (and (= path-length (.path-length ^HistoryBuffer o))
-         (.equals path ^IntBuffer (.path ^HistoryBuffer o))
-         (= energy (.energy ^HistoryBuffer o))))
-
-  IHistory
-  (long-enough?* [this len] (>= path-length ^long len))
-  (tag-sliceIDs* [this offset] (tag-sliceIDs* this offset false))
-  (tag-sliceIDs* [this offset forced]
-    (when forced (.clear slices))
-    (if (.isEmpty slices)
-      (loop [i ^int (int 0)]
-        (if (< i path-length)
-          (let [idx ^int (.get path i)
-                sid ^int (int (quot idx ^int offset))]
-            (if-let [c ^int (.get slices sid)]
-              (.replace slices sid (unchecked-inc-int c))
-              (.put slices sid (int 1)))
-            (recur (unchecked-inc-int i)))
-          (do
-            (doseq [[k v] slices]
-              (.replace slices (int k) (/ (double v) path-length)))
-            this)))
-      this))
-
-  clojure.lang.Counted
-  (count [_] path-length)
-
-  clojure.lang.IFn
-  (invoke [this i] (.get path (int i)))
-
-  clojure.lang.Sequential
-  clojure.lang.IPersistentVector
-  (seq [this]
-    (vseq this path-length 0))
-  (nth [this i] (.get path (int i)))
-  (nth [this i not-found]
-    (if (< i path-length)
-      (.get path (int i))
-      not-found))
-
-  IPathData
-  ;; (toPathData [this]
-  ;;   (let [pd ^PathData (->PathData (int-array path-length) chord-len energy)
-  ;;         a ^ints (.path pd)]
-  ;;     (loop [i ^int (int 0)]
-  ;;       (when (< i path-lengt
-  ;;         (aset a i (.get path i))
-  ;;         (recur (unchecked-inc-int i))))
-  ;;     pd))
-  (toPathData [this]
-    (let [a (int-array path-length)]
-      (loop [i ^int (int 0)]
-        (if (< i path-length)
-          (do
-            (aset a i (.get path i))
-            (recur (inc i)))
-          (->PathData id a chord-len energy
-                      entry-xy entry-xz exit-xy exit-xz
-                      (new HashMap))))))
-
-  (toPathData [this x]
-    (let-release [a (int-array path-length)]
-      (loop [i   ^int (int 0)
-             len ^int (int 0)]
-        (if (< i path-length)
-          (let [voxl ^int (.get path i)]
-            (if (= (x voxl) 0.0)
-              (recur (inc i) len)
-              (do
-                (aset a len voxl)
-                (recur (inc i) (inc len)))))
-          ;; (timbre/info "Path: " len (vec a))
-          (->PathData id (int-array len a) chord-len energy
-                      entry-xy entry-xz exit-xy exit-xz
-                      (doto (new HashMap)
-                        (.put :residue (residue* this x))))))))
-  (toPathData [this x spec]
-    (let-release [a (int-array path-length)]
-      (loop [i   ^int (int 0)
-             len ^int (int 0)]
-        (if (< i path-length)
-          (let [voxl ^int (.get path i)]
-            (if (= (x voxl) 0.0)
-              (recur (inc i) len)
-              (do
-                (aset a len voxl)
-                (recur (inc i) (inc len)))))
-          ;; (timbre/info "Path: " len (vec a))
-          (let [im-size (long (:im-size spec))
-                rows    (long (:rows spec))
-                cols    (long (:cols spec))
-                ;; im0 (rem (aget a 0) im-size)
-                ;; im1 (rem (aget a (dec len)) im-size)
-                im0 (rem (.get path 0) im-size)
-                im1 (rem (.get path (dec path-length)) im-size)
-                x0  (rem  im0 rows)
-                y0  (quot im0 rows)
-                x1  (rem  im1 rows)
-                y1  (quot im1 rows)
-                path-angle (if (and (= (- x1 x0) 0) (= (- y0 y1) 0))
-                             -666.0
-                             (let [a (float (int (+ (rad2deg (Math/atan2 (double (- y0 y1)) (double (- x1 x0))))
-                                                    0.5)))]
-                               (cond
-                                 (=  a  180.0) 0.0
-                                 (<= a -180.0) (+ a 360.0)
-                                 (<  a  0.0)   (+ a 180.0)
-                                 :else a)))] ;; angle should range from 0 - 179 degrees
-            (->PathData id (int-array len a) chord-len energy
-                        entry-xy entry-xz exit-xy exit-xz
-                        (doto (new HashMap)
-                          (.put :residue (residue* this x)))))))))
-  ;; (toPathData [this offset]
-  ;;   (let [pd ^PathData (->PathData (int-array path-length) chord-len energy)
-  ;;         a ^ints (.path pd)]
-  ;;     (loop [i ^int (int 0)]
-  ;;       (when (< i path-length)
-  ;;         (aset a i (unchecked-subtract-int (.get path i) offset))
-  ;;         (recur (unchecked-inc-int i))))
-  ;;     pd))
-  IPathCompute
-  (dot* [this x]
-    (loop [i (int 0)
-           sum 0.0]
-      (if (< i path-length)
-        (recur (unchecked-inc-int i) (+ sum ^double (x (.get path i))))
-        (* sum chord-len))))
-
-  (residue* [this x]
-    (- ^double (dot* this x) (double energy))))
-
-(defn HistoryBuffer->fromStream
-  "Read the path and b data from two seperate files provided by Paniz, each one contains everything.
-   pis : BufferedInputStream for path file
-   bis : BufferedInputstream for b file
-
-   Return a HistoryBuffer"
-
-  #_([^java.io.BufferedInputStream is]
-   (when-let [[^int length ^bytes len-buf] (read-int is true)]
-     (let [path-buf ^bytes (byte-array (* 4 length))
-           path ^IntBuffer (-> (ByteBuffer/wrap ^bytes path-buf)
-                               (.order ByteOrder/LITTLE_ENDIAN)
-                               .asIntBuffer)
-           [^double chord-len ^bytes chord-len-buf] (read-double is true)]
-       (when-not (= (.read is path-buf) -1)
-         (when-let [[^float energy ^bytes e-buf] (read-float is true)]
-           (->HistoryBuffer length path energy len-buf path-buf e-buf (HashMap.)))))))
-  ([^long id ^java.io.BufferedInputStream pis ^java.io.BufferedInputStream bis]
-   (when-let [[^int length ^bytes len-buf] (read-int pis true)]
-     (let [path-buf ^bytes (byte-array (* 4 length))
-           path ^IntBuffer (-> (ByteBuffer/wrap ^bytes path-buf)
-                               (.order ByteOrder/LITTLE_ENDIAN)
-                               .asIntBuffer)]
-       (when-not (= (.read pis path-buf) -1)
-         (let [[^double chord-len   ^bytes chord-len-buf] (read-double pis true)
-               [^FloatBuffer angles ^bytes angle-buf]     (read-floats pis 4 true)
-               [^float energy       ^bytes e-buf]         (read-float bis true)]
-           (->HistoryBuffer id
-                         length path
-                         chord-len (.get angles 0) (.get angles 1) (.get angles 2) (.get angles 3)
-                         energy
-                         len-buf path-buf chord-len-buf angle-buf e-buf (HashMap.))))))))
 
 (defn PathData->fromStream
   "Read the path and b data from two seperate files provided by Paniz, each one contains everything.
@@ -548,73 +371,73 @@
                              ^{:unsynchronized-mutable true :tag long} index
                              ^{:unsynchronized-mutable true :tag boolean} open?]
   IHistoryInput
-  (skip* [this k]
-    (let [last-idx (+ index ^long k)]
-      (if bis
-        (loop [i index]
-          (if (< i last-idx)
-            (when-let [b (HistoryBuffer->fromStream i pis bis)]
-              (recur (unchecked-inc i)))
-            (set! index i)))
-        (loop [i index]
-          (if (< i last-idx)
-            (when-let [b (HistoryBuffer->fromStream i pis bis)]
-              (recur (unchecked-inc i)))
-            (set! index i))))
-      this))
+  ;; (skip* [this k]
+  ;;   (let [last-idx (+ index ^long k)]
+  ;;     (if bis
+  ;;       (loop [i index]
+  ;;         (if (< i last-idx)
+  ;;           (when-let [b (HistoryBuffer->fromStream i pis bis)]
+  ;;             (recur (unchecked-inc i)))
+  ;;           (set! index i)))
+  ;;       (loop [i index]
+  ;;         (if (< i last-idx)
+  ;;           (when-let [b (HistoryBuffer->fromStream i pis bis)]
+  ;;             (recur (unchecked-inc i)))
+  ;;           (set! index i))))
+  ;;     this))
 
-  (next* [this]
-    (when open?
-      (let [s (HistoryBuffer->fromStream index pis bis)]
-        (set! index (inc index))
-        s)))
+  ;; (next* [this]
+  ;;   (when open?
+  ;;     (let [s (HistoryBuffer->fromStream index pis bis)]
+  ;;       (set! index (inc index))
+  ;;       s)))
 
-  (next* [this n]
-    (let [acc ^ArrayList (ArrayList. (int n))
-          last-idx (+ index ^long n)]
-      (loop [i index]
-        (if (< i last-idx)
-          (when-let [b (HistoryBuffer->fromStream i pis bis)]
-            (.add acc b)
-            (recur (inc i)))
-          (set! index i)))
-      acc))
+  ;; (next* [this n]
+  ;;   (let [acc ^ArrayList (ArrayList. (int n))
+  ;;         last-idx (+ index ^long n)]
+  ;;     (loop [i index]
+  ;;       (if (< i last-idx)
+  ;;         (when-let [b (HistoryBuffer->fromStream i pis bis)]
+  ;;           (.add acc b)
+  ;;           (recur (inc i)))
+  ;;         (set! index i)))
+  ;;     acc))
 
-  (next* [this n out-ch]
-    (let [last-idx (+ index ^long n)]
-      (loop [i index]
-        (if (< i last-idx)
-          (when-let [b (HistoryBuffer->fromStream i pis bis)]
-            (>!! out-ch b)
-            (recur (inc i)))
-          (set! index i))))
-    (a/close! out-ch))
+  ;; (next* [this n out-ch]
+  ;;   (let [last-idx (+ index ^long n)]
+  ;;     (loop [i index]
+  ;;       (if (< i last-idx)
+  ;;         (when-let [b (HistoryBuffer->fromStream i pis bis)]
+  ;;           (>!! out-ch b)
+  ;;           (recur (inc i)))
+  ;;         (set! index i))))
+  ;;   (a/close! out-ch))
 
-  (rest* [this out-ch] ;; read
-    (loop []
-      (when-let [b (HistoryBuffer->fromStream index pis bis)]
-        (set! index (inc index))
-        (>!! out-ch b)
-        (recur)))
-    (a/close! out-ch))
+  ;; (rest* [this out-ch] ;; read
+  ;;   (loop []
+  ;;     (when-let [b (HistoryBuffer->fromStream index pis bis)]
+  ;;       (set! index (inc index))
+  ;;       (>!! out-ch b)
+  ;;       (recur)))
+  ;;   (a/close! out-ch))
 
-  (rest* [this out-ch batch-size]
-    ;; read in data as Historybuffer
-    (let [batch-size ^long batch-size]
-      (loop [acc ^objects (object-array batch-size)
-             i   ^long    (long 0)
-             c index]
-        (if-let [b (HistoryBuffer->fromStream c pis bis)]
-          (do (if (< i batch-size)
-                (do (aset acc i b)
-                    (recur acc (unchecked-inc i) (unchecked-inc c)))
-                (let [new-acc ^objects (object-array batch-size)]
-                  (>!! out-ch [i acc])
-                  (aset new-acc 0 b)
-                  (recur new-acc (long 1) (unchecked-inc c)))))
-          (do (>!! out-ch [i acc])
-              (set! index c))))
-      (a/close! out-ch)))
+  ;; (rest* [this out-ch batch-size]
+  ;;   ;; read in data as Historybuffer
+  ;;   (let [batch-size ^long batch-size]
+  ;;     (loop [acc ^objects (object-array batch-size)
+  ;;            i   ^long    (long 0)
+  ;;            c index]
+  ;;       (if-let [b (HistoryBuffer->fromStream c pis bis)]
+  ;;         (do (if (< i batch-size)
+  ;;               (do (aset acc i b)
+  ;;                   (recur acc (unchecked-inc i) (unchecked-inc c)))
+  ;;               (let [new-acc ^objects (object-array batch-size)]
+  ;;                 (>!! out-ch [i acc])
+  ;;                 (aset new-acc 0 b)
+  ;;                 (recur new-acc (long 1) (unchecked-inc c)))))
+  ;;         (do (>!! out-ch [i acc])
+  ;;             (set! index c))))
+  ;;     (a/close! out-ch)))
 
   (read-PathData [this]
     (if-let [s (PathData->fromStream index pis bis)]
@@ -704,137 +527,51 @@
      (HistoryInputStream. pis bis p-count 0 true))))
 
 
-(deftype HistoryOutputStream [^String name ^RandomAccessFile raf ^BufferedOutputStream os
-                           ^{:unsynchronized-mutable true :tag int} n]
-  IHistoryOutput
-  (writeHistory* [this history]
-    (let [len-buf  ^bytes (.len-buf  ^HistoryBuffer history)
-          path-buf ^bytes (.path-buf ^HistoryBuffer history)
-          e-buf    ^bytes (.e-buf    ^HistoryBuffer history)]
-      (if (and len-buf path-buf e-buf)
-        (do
-          (.write os len-buf  0 (alength len-buf))
-          (.write os path-buf 0 (alength path-buf))
-          (.write os e-buf    0 (alength e-buf))
-          (set! n (unchecked-inc-int n))
-          true)
-        false)))
-  (writeHeader* [this header]
-    (.flush os)
-    (let [n ^long (.getFilePointer raf)]
-      (.seek raf 0)
-      (.writeBytes raf (format (format "%%0%dd\n" header-length) header))
-      (when (> n 0)
-        (.seek raf n))))
+;; (deftype HistoryOutputStream [^String name ^RandomAccessFile raf ^BufferedOutputStream os
+;;                            ^{:unsynchronized-mutable true :tag int} n]
+;;   IHistoryOutput
+;;   (writeHistory* [this history]
+;;     (let [len-buf  ^bytes (.len-buf  ^HistoryBuffer history)
+;;           path-buf ^bytes (.path-buf ^HistoryBuffer history)
+;;           e-buf    ^bytes (.e-buf    ^HistoryBuffer history)]
+;;       (if (and len-buf path-buf e-buf)
+;;         (do
+;;           (.write os len-buf  0 (alength len-buf))
+;;           (.write os path-buf 0 (alength path-buf))
+;;           (.write os e-buf    0 (alength e-buf))
+;;           (set! n (unchecked-inc-int n))
+;;           true)
+;;         false)))
+;;   (writeHeader* [this header]
+;;     (.flush os)
+;;     (let [n ^long (.getFilePointer raf)]
+;;       (.seek raf 0)
+;;       (.writeBytes raf (format (format "%%0%dd\n" header-length) header))
+;;       (when (> n 0)
+;;         (.seek raf n))))
 
-  ICloseable
-  (close* [this]
-    (.close this))
+;;   ICloseable
+;;   (close* [this]
+;;     (.close this))
 
-  java.lang.AutoCloseable
-  (close [this]
-    ;; (print "closing output stream ...")
-    (writeHeader* this n)
-    (.close os)
-    (.close raf)
-    ;; (println "done.")
-    ))
+;;   java.lang.AutoCloseable
+;;   (close [this]
+;;     ;; (print "closing output stream ...")
+;;     (writeHeader* this n)
+;;     (.close os)
+;;     (.close raf)
+;;     ;; (println "done.")
+;;     ))
 
-(defn newHistoryOutputStream
-  ([fname]
-   (newHistoryOutputStream fname 8192))
-  ([fname size]
-   (let [f ^File (File. ^String fname)
-         raf ^RandomAccessFile (RandomAccessFile. f "rw")
-         bos ^BufferedOutputStream (BufferedOutputStream. (FileOutputStream. (.getFD raf)) (int size))]
-     (.writeBytes raf (format (format "%%0%dd\n" header-length) 0))
-     (HistoryOutputStream. fname raf bos (int 0)))))
-
-
-;; (defn read-path-samples [path-file b-file & {:keys [lines skip out] :or {skip 0}}]
-;;   (println (format "Reading from file %s for %d lines, skipping %d lines." path-file lines skip))
-;;   (with-open [pis ^java.io.BufferedInputStream (io/input-stream path-file)
-;;               bis ^java.io.BufferedInputStream (io/input-stream b-file)]
-;;     (let [p-count ^int (read-header pis)
-;;           b-count ^int (read-header bis)]
-;;       (assert (= p-count b-count))
-;;       (dotimes [_ skip]
-;;         (HistoryBuffer->fromStream pis bis))
-;;       (if out
-;;         (let [limit (or lines p-count)]
-;;           (dotimes [i limit]
-;;             (>!! out (HistoryBuffer->fromStream pis bis)))
-;;           (a/close! out)
-;;           (assert (= (.read pis) -1))
-;;           (println (format "%s ends ... OK." path-file))
-;;           (assert (= (.read bis) -1))
-;;           (println (format "%s ends ... OK." b-file)))
-;;         (let [a ^ArrayList (ArrayList.)]
-;;           (dotimes [_ (or lines 1000)]
-;;             (.add a (HistoryBuffer->fromStream pis bis)))
-;;           (let [v (vec a)]
-;;             (.clear a)
-;;             v))))))
-
-;; This is mean to used in a single thread
-(deftype HistoryAccumulator [^ArrayList hist-acc
-                             ^{:unsynchronized-mutable true :tag long} total
-                             ^{:unsynchronized-mutable true :tag long} chunk
-                             ^long chunk-size ^HistoryOutputStream out]
-  ;; java.util.Collection
-  IAccumulator
-  (add* [this hist]
-    (set! total (unchecked-add total (count hist)))
-    (let [n (unchecked-add chunk (count hist))]
-      (if (> n chunk-size)
-        (do
-          (write-out* this)
-          (.clear hist-acc)
-          (doseq [b hist]
-            (writeHistory* out b))
-          (set! chunk 0))
-        (do
-          (.add hist-acc hist)
-          (set! chunk n)))
-      this))
-
-  IOutput
-  (write-out* [this]
-    (doseq [acc hist-acc]
-      (doseq [b acc]
-        (writeHistory* out b))))
-
-  ICloseable
-  (close* [this]
-    (.close this))
-
-  java.lang.AutoCloseable
-  (close [this]
-    (when (> (.size hist-acc) 0)
-      (write-out* this)
-      (.clear hist-acc)
-      (set! chunk 0))
-    (writeHeader* out total)
-    (.close out))
-
-  clojure.lang.Counted
-  (count [_] total)
-
-  clojure.lang.IPersistentVector
-  (seq [_] (list (.name out) total chunk)))
-
-
-(defn newHistoryAcc [filename & {:keys [truncate chunk] :or {truncate false chunk 1000}}]
-  (let [f ^File (io/file filename)]
-    (println "Filename: " (.getName f))
-    (when-let [d ^File (.getParentFile f)]
-      (.mkdirs d))
-    (when (and (.exists f) (not truncate))
-      (backup f))
-    (let [fos ^RandomAccessFile (RandomAccessFile. f "rw")]
-      (write-header fos 0 :fixed true)
-      (HistoryAccumulator. (ArrayList.) 0 0 chunk (newHistoryOutputStream filename (* 1024 1024))))))
-
+;; (defn newHistoryOutputStream
+;;   ([fname]
+;;    (newHistoryOutputStream fname 8192))
+;;   ([fname size]
+;;    (let [f ^File (File. ^String fname)
+;;          raf ^RandomAccessFile (RandomAccessFile. f "rw")
+;;          bos ^BufferedOutputStream (BufferedOutputStream. (FileOutputStream. (.getFD raf)) (int size))]
+;;      (.writeBytes raf (format (format "%%0%dd\n" header-length) 0))
+;;      (HistoryOutputStream. fname raf bos (int 0)))))
 
 (defn ^:private ensureSize [^ArrayList arr ^long n f]
   (when (<= (count arr) (int n))
@@ -1221,6 +958,4 @@
      (->HistoryIndex index rows cols slices (int 0) false
                      (if global? true false)
                      (if x0 (copy x0) (dv (* rows cols slices)))))))
-
-
 
