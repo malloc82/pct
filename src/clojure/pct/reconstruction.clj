@@ -157,23 +157,38 @@
               shuffled-data ^objects (object-array h-size)]
           (transfer! v local-x)
           (Collections/sort histories)
+          (when (< 0 h-size)
+           (loop [i step
+                  j (long 0)]
+             (if (= i 0)
+               (aset shuffled-data j (.get histories i))
+               (do (aset shuffled-data j (.get histories i))
+                   (recur (long (mod (+ i step) h-size))
+                          (unchecked-inc j))))))
           (timbre/info (format "%s: start: block [%d %d] %s"
                                thread-name (first slices) (count slices) [(* offset-x slice-offset) slice-offset]))
           ;; iter 0
-          (let [next-x (if (< 0 h-size)
-                         (loop [i step
-                                x local-x
-                                idx (long 0)]
-                           (if (= i 0)
-                             (let [h ^pct.data.PathData (.get histories i)]
-                               (aset shuffled-data idx h)
-                               (pct.data/proj_art-4* ^pct.data.PathData h x 0.0025))
-                             (let [h ^pct.data.PathData (.get histories i)]
-                               (aset shuffled-data idx h)
-                               (recur (long (mod (+ i step) h-size))
-                                      (pct.data/proj_art-4* h x 0.0025)
-                                      (unchecked-inc idx)))))
-                         local-x)]
+          (let [next-x (loop [i (long 0)
+                                    x local-x]
+                               (if (< i h-size)
+                                 (recur (unchecked-inc i)
+                                        (pct.data/proj_art-4* ^pct.data.PathData (aget shuffled-data i) x 0.0025))
+                                 x))
+                #_(if (< 0 h-size)
+                    (loop [i step
+                           x local-x
+                           idx (long 0)]
+                      (if (= i 0)
+                        (let [h ^pct.data.PathData (.get histories i)]
+                          (timbre/info (format "%s, (%d): last-idx=%d, h-size=%d" thread-name 0 idx h-size))
+                          (aset shuffled-data idx h)
+                          (pct.data/proj_art-4* ^pct.data.PathData h x 0.0025))
+                        (let [h ^pct.data.PathData (.get histories i)]
+                          (aset shuffled-data idx h)
+                          (recur (long (mod (+ i step) h-size))
+                                 (pct.data/proj_art-4* h x 0.0025)
+                                 (unchecked-inc idx)))))
+                    local-x)]
             #_(a/>!! out [key (Arrays/copyOf local-x data-len)])
             (a/>!! out [key next-x])
             (timbre/info (format "%s, (%d) : data sent." thread-name 0)))
@@ -206,33 +221,48 @@
               shuffled-data ^objects (object-array h-size)]
           (timbre/info (format "%s started." thread-name))
           (Collections/sort histories)
+          (when (< 0 h-size)
+           (loop [i step
+                  j (long 0)]
+             (if (= i 0)
+               (aset shuffled-data j (.get histories i))
+               (do (aset shuffled-data j (.get histories i))
+                   (recur (long (mod (+ i step) h-size))
+                          (unchecked-inc j))))))
           (loop [iter  (long 0)]
             (if (< iter iterations)
               (let [continue?
                     (boolean
                      (loop [remaining (into #{} (keys offset-lut))]
                        (if (empty? remaining)
-                         (let [next-x (if (= iter 0)
-                                        (if (< 0 h-size)
-                                          (loop [i step
-                                                 x local-x
-                                                 idx (long 0)]
-                                            (if (= i 0)
-                                              (let [h ^pct.data.PathData (.get histories i)]
-                                                (aset shuffled-data idx h)
-                                                (pct.data/proj_art-4* ^pct.data.PathData h x 0.0025))
-                                              (let [h ^pct.data.PathData (.get histories i)]
-                                                (aset shuffled-data idx h)
-                                                (recur (long (mod (+ i step) h-size))
-                                                       (pct.data/proj_art-4* h x 0.0025)
-                                                       (unchecked-inc idx)))))
-                                          local-x)
-                                        (loop [i (long 0)
-                                               x local-x]
-                                          (if (< i h-size)
-                                            (recur (unchecked-inc i)
-                                                   (pct.data/proj_art-4* ^pct.data.PathData (aget shuffled-data i) x 0.0025))
-                                            x)))]
+                         (let [next-x (loop [i (long 0)
+                                             x local-x]
+                                        (if (< i h-size)
+                                          (recur (unchecked-inc i)
+                                                 (pct.data/proj_art-4* ^pct.data.PathData (aget shuffled-data i) x 0.0025))
+                                          x))
+                               #_(if (= iter 0)
+                                   (if (< 0 h-size)
+                                     (loop [i step
+                                            x local-x
+                                            idx (long 0)]
+                                       (if (= i 0)
+                                         (let [h ^pct.data.PathData (.get histories i)]
+                                           (timbre/info (format "%s, (%d): last-idx=%d, h-size=%d" thread-name iter idx h-size))
+                                           (aset shuffled-data idx h)
+                                           (pct.data/proj_art-4* ^pct.data.PathData h x 0.0025))
+                                         (let [h ^pct.data.PathData (.get histories i)]
+                                           (aset shuffled-data idx h)
+                                           (recur (long (mod (+ i step) h-size))
+                                                  (pct.data/proj_art-4* h x 0.0025)
+                                                  (unchecked-inc idx)))))
+                                     local-x)
+                                   (loop [i (long 0)
+                                          x local-x]
+                                     (if (< i h-size)
+                                       (recur (unchecked-inc i)
+                                              (pct.data/proj_art-4* ^pct.data.PathData (aget shuffled-data i) x 0.0025))
+                                       x)))]
                            (timbre/info (format "%s, (%d), sending local-x" thread-name iter))
                            (a/>!! out [key next-x])
                            true)
