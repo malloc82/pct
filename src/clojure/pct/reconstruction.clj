@@ -144,7 +144,7 @@
 
 
 
-(defn block-recon [^pct.async.node.AsyncGrid node ^pct.data.HistoryIndex global-index ^RealBlockVector init-x ^long iterations]
+(defn block-recon [^pct.async.node.AsyncNode node ^pct.data.HistoryIndex global-index ^RealBlockVector init-x ^long iterations]
   (let [{slices :slices, in :ch-in, out :ch-out, res :ch-log, key :key, offset-lut :local-offsets} node
         slice-offset (pct.data/slice-size* global-index)]
     (if (= (count slices) 1)
@@ -224,3 +224,17 @@
                   (recur (unchecked-inc iter))
                   (timbre/info (format "%s, iter %d: shutdown." thread-name iter))))
               (do (timbre/info (format "%s, finished." thread-name))))))))))
+
+
+
+(defn async-art [^pct.async.node.AsyncGrid grid ^pct.data.HistoryIndex global-index ^RealBlockVector init-x ^long iterations]
+  {:pre [(<= 0 iterations)]
+   :post []}
+  (pct.async.node/distribute-all grid block-recon [global-index init-x iterations])
+  (let [slice-offset (pct.data/slice-size* global-index)
+        final-x ^RealBlockVector (zero init-x)]
+    (doseq [[k [data [global-offset len local-offset]]] (a/<!! (pct.async.node/collect-data grid #(= (count (:slices %)) 1)))]
+      (let [v (subvector final-x (* global-offset slice-offset) slice-offset)]
+        (transfer! data final-x)))
+    final-x))
+
