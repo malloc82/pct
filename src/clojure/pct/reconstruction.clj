@@ -1,6 +1,7 @@
 (ns pct.reconstruction
   (:use clojure.core)
-  (:require pct.data
+  (:require pct.data pct.async.node
+            [clojure.core.async :as a]
             [pct.common :refer [with-out-str-data-map]]
             [taoensso.timbre :as timbre]
             [uncomplicate.neanderthal
@@ -13,8 +14,8 @@
             [uncomplicate.neanderthal.internal.host
              [mkl :as mkl]]
             [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]])
-  (:import [java.util ArrayList Iterator]
-   [uncomplicate.neanderthal.internal.host.buffer_block IntegerBlockVector RealBlockVector]
+  (:import [java.util ArrayList Iterator Arrays]
+           [uncomplicate.neanderthal.internal.host.buffer_block IntegerBlockVector RealBlockVector]
            ))
 
 
@@ -140,3 +141,86 @@
         (if (< i n)
           (recur (unchecked-inc i) (+ x (v (rand-int n))))
           x))))])
+
+
+
+(defn block-recon [^pct.async.node.AsyncGrid node ^pct.data.HistoryIndex global-index ^RealBlockVector init-x ^long iterations]
+  (let [{slices :slices, in :ch-in, out :ch-out, res :ch-log, key :key, offset-lut :local-offsets} node
+        slice-offset (pct.data/slice-size* global-index)]
+    (if (= (count slices) 1)
+      (a/thread
+        (let [[offset-x length offset-local] (:global-offset node)
+              v (subvector init-x (* offset-x slice-offset) slice-offset)
+              local-x (double-array (dim v))
+              data-len slice-offset
+              thread-name (format "==> Head [%s]" key)
+              histories ^ArrayList (global-index (first slices) (count slices))
+              h-size    ^int       (.size histories)]
+          (transfer! v local-x)
+          (timbre/info (format "%s start: block [%d %d] %s"
+                               thread-name (first slices) (count slices) [(* offset-x slice-offset) slice-offset]))
+          ;; iter 0
+          (let [next-x (loop [i (long 0)
+                              x local-x]
+                         (if (< i h-size)
+                           (recur (unchecked-inc i)
+                                  (pct.data/proj_art-4* ^pct.data.PathData (.get histories i) x 0.0025))
+                           x))]
+            (a/>!! out [key (Arrays/copyOf local-x data-len)]))
+          (timbre/info (format "%s iter %d : data sent." thread-name 0))
+          (loop [iter (long 1)]
+            (let [[k v] (a/<!! in)
+                  [offset-v length offset-local] (get offset-lut k)]
+              (timbre/info (format "%s, iter %d, got data from %s" thread-name iter k))
+              (System/arraycopy v (* offset-v slice-offset) local-x 0 slice-offset)
+              (if (< iter iterations)
+                (let [next-x (loop [i (long 0)
+                                    x local-x]
+                               (if (< i h-size)
+                                 (recur (unchecked-inc i)
+                                        (pct.data/proj_art-4* ^pct.data.PathData (.get histories i) x 0.0025))
+                                 x))]
+                  (a/>!! out [key (Arrays/copyOf local-x data-len)])
+                  (recur (unchecked-inc iter)))
+                (do (timbre/info (format " %s iter=%d, done. Sending out local-x" thread-name iter))
+                    (a/>!! res [key [local-x (:global-offset node)]])
+                    (a/close! res)
+                    (a/close! out)))))))
+
+
+      (a/thread
+        (let [data-len    (* slice-offset (count slices))
+              local-x     (double-array data-len)
+              thread-name (format "  ---> Thread [%s]" key)
+              histories   ^ArrayList (global-index (first slices) (count slices))
+              h-size      ^int       (.size histories)]
+          (loop [iter  (long 0)]
+            (if (<= iter iterations)
+              (let [continue?
+                    (boolean
+                     (loop [remaining (into #{} (keys offset-lut))]
+                       (if (empty? remaining)
+                         (let [next-x (loop [i (long 0)
+                                             x local-x]
+                                        (if (< i h-size)
+                                          (recur (unchecked-inc i)
+                                                 (pct.data/proj_art-4* ^pct.data.PathData (.get histories i) x 0.0025))
+                                          x))]
+                           (timbre/info (format "%s, iter %d, sending local-x" thread-name iter))
+                           (a/>!! out [key (Arrays/copyOf local-x data-len)])
+                           true)
+                         (if-let [[k v] (a/<!! in)]
+                           (if-let [[offset-v length offset-local] (get offset-lut k)]
+                             (do (timbre/info (format "%s, iter %d, got data" thread-name iter))
+                                 (System/arraycopy v (* offset-v slice-offset) local-x (* offset-local slice-offset) length)
+                                 (recur (disj remaining k)))
+                             (do (timbre/info (format "%s, iter %d, could not find key %s, skip."
+                                                      thread-name iter k))
+                                 (recur remaining)))
+                           (do (timbre/info (format "%s, iter %d: incoming channel is closed. Thread is shutting down."
+                                                    thread-name iter))
+                               false)))))]
+                (if continue?
+                  (recur (unchecked-inc iter))
+                  (timbre/info (format "%s, iter %d: shutdown." thread-name iter))))
+              (do (timbre/info (format "%s, finished." thread-name))))))))))
