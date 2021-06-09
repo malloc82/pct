@@ -7,7 +7,7 @@
             [clojure.core.async.impl.mutex :as mutex]
             [clojure.inspector :as inspector]
             [taoensso.timbre :as timbre])
-  (:import [java.util HashMap TreeSet TreeMap LinkedList Iterator]
+  (:import [java.util HashMap TreeSet TreeMap LinkedList Iterator Arrays]
            [java.util.concurrent.locks Lock]
            [clojure.core.async.impl.channels ManyToManyChannel]))
 
@@ -69,6 +69,13 @@
 
 (defprotocol IAsyncCompute)
 
+(defprotocol INodeInfo
+  (setProperty   [this k v])
+  (updateProperty [this k f] [this k f a] [this k f a b])
+  (getProperty   [this k])
+  (getProperties [this])
+  (clearProperties! [this]))
+
 (defrecord NodeConnection [^TreeSet connected ^HashMap connection]
   IConnection
   (add-node [this node-key slices]
@@ -108,7 +115,8 @@
                       ^ManyToManyChannel ch-log ;; data logging, for debugging & testing
                       ^TreeSet unused
                       ^NodeConnection upstream ^NodeConnection downstream
-                      ^HashMap local-offsets ^clojure.lang.PersistentVector global-offset]
+                      ^HashMap local-offsets ^clojure.lang.PersistentVector global-offset
+                      Properties]
   clojure.lang.IFn
   (invoke [this] (count slices))
   (invoke [this k] (k this))
@@ -177,6 +185,13 @@
   ;; IAsyncCommunication
   ;; (distribute [this f]
   ;;   (f this))
+
+  INodeInfo
+  (setProperty [this k v]    (swap! Properties assoc k v))
+  (updateProperty [this k f] (swap! Properties update k f))
+  (getProperty [this k]    (get @Properties k))
+  (getProperties [this]    @Properties)
+  (clearProperties! [this] (reset! Properties {}))
   )
 
 
@@ -195,7 +210,8 @@
                      :upstream   (newNodeConnection n)
                      :downstream (newNodeConnection n)
                      :global-offset [(int (first slices)) n (int 0)] ;; offset-x, length, offset-y
-                     :local-offsets (HashMap. n)})))
+                     :local-offsets (HashMap. n)
+                     :properties (atom {})})))
 
 
 (defprotocol IAsyncGrid
@@ -417,29 +433,28 @@
     (collect-data this (fn [_] true)))
 
   (collect-data [this cond-fn]
-    (let [out (a/chan 1)]
-      (a/go
-        (let [nodes (select [grid-walker cond-fn] grid)
-              cs (mapv :ch-log nodes)]
-         (loop [remaining (into #{} (mapv :key nodes))
-                acc (transient {})]
-           (if (empty? remaining)
-             (a/>! out (persistent! acc))
-             (let [[[k data] ch] (a/alts! cs)]
-               (if (and k (remaining k))
-                 (recur (disj remaining k) (assoc! acc k [data (:global-offset (lut k)) ] ))
-                 (recur remaining acc)))))))
+    (a/go
+      (let [nodes (select [grid-walker cond-fn] grid)
+            cs (mapv :ch-log nodes)]
+        (loop [remaining (into #{} (mapv :key nodes))
+               acc (transient {})]
+          ;; (timbre/info (format "collect-data: remaining %s" remaining))
+          (if (empty? remaining)
+            (persistent! acc)
+            (let [[[k data] ch] (a/alts! cs)]
+              (if (and k (remaining k))
+                (recur (disj remaining k) (assoc! acc k data))
+                (recur remaining acc)))))))
 
-      #_(a/thread
+    #_(a/thread
         (let [acc ^HashMap (HashMap.)]
-         (loop [remaining (into #{} (mapv :ch-log (select [grid-walker cond-fn] grid)))]
-           (if (empty? remaining)
-             (a/>!! out acc)
-             (let [[[k data] ch] (a/alts!! (vec remaining))]
-               (if k
-                 (.put acc k data))
-               (recur (disj remaining ch)))))))
-      out))
+          (loop [remaining (into #{} (mapv :ch-log (select [grid-walker cond-fn] grid)))]
+            (if (empty? remaining)
+              (a/>!! out acc)
+              (let [[[k data] ch] (a/alts!! (vec remaining))]
+                (if k
+                  (.put acc k data))
+                (recur (disj remaining ch))))))))
 
   (data-log [this]
     (let [log-ch (a/chan (* (count lut) 2))
@@ -526,3 +541,79 @@
          (= l-offset 0))))
 
 (spec/def ::global-offset-consistent? #(global-offsets-check %))
+
+
+(defn node-plus1 [^AsyncNode node ^ints data-array f ^long iterations]
+  (let [{slices :slices, in :ch-in, out :ch-out, res :ch-log, key :key, offset-lut :local-offsets} node]
+    (tap> [(str slices) offset-lut])
+    (if (= (count slices) 1)
+      (a/thread
+        (let [id (first slices)
+              data-len 1
+              local-data (int-array data-len)
+              thread-name (format "==> Head [%s]" key)]
+          (System/arraycopy data-array id local-data 0 1)
+          (timbre/info (format "%s start : (%d)" thread-name (aget local-data 0)))
+          ;; iter 0
+          (aset local-data 0 (+ (aget local-data 0) 1))
+          (timbre/info (format "%s iter %d : (%d)" thread-name 0 (aget local-data 0)))
+          (a/>!! out [key local-data])
+          (loop [iter (long 1)]
+            (let [[k v] (a/<!! in)
+                  [offset-v length offset-local] (-> node :local-offsets k)]
+              (timbre/info (format "%s, iter %d, got data from %s" thread-name iter k))
+              (System/arraycopy v offset-v local-data offset-local length)
+              (if (< iter iterations)
+                (do (aset local-data 0 ^int (f (aget local-data 0)))
+                    (a/>!! out [key (Arrays/copyOf local-data data-len)])
+                    (recur (unchecked-inc iter)))
+                (do (timbre/info (format " %s iter=%d, done. Sending out local-data" thread-name iter))
+                    (a/>!! res [key [local-data (:global-offset node)]])
+                    (a/close! res)
+                    (a/close! out)))))))
+      (a/thread
+        (let [id          (first slices)
+              data-len    (count slices)
+              local-data  (int-array data-len)
+              thread-name (format "  ---> Thread [%s]" key)]
+          (loop [iter  (long 0)]
+            (if (<= iter iterations)
+              (let [continue?
+                    (boolean
+                     (loop [remaining (into #{} (keys offset-lut))]
+                       (if (empty? remaining)
+                         (do (dotimes [i data-len]
+                               (aset local-data i ^int (f (aget local-data i))))
+                             (timbre/info (format "%s, iter %d, sending local-data" thread-name iter))
+                             (a/>!! out [key (Arrays/copyOf local-data data-len)])
+                             true)
+                         (if-let [[k v] (a/<!! in)]
+                           (if-let [[offset-v length offset-local] (get offset-lut k)]
+                             (do (timbre/info (format "%s, iter %d, got : %s" thread-name iter v))
+                                 (System/arraycopy v offset-v local-data offset-local length)
+                                 (recur (disj remaining k)))
+                             (do (timbre/info (format "%s, iter %d, could not find key %s, skip."
+                                                      thread-name iter k))
+                                 (recur remaining)))
+                           (do (timbre/info (format "%s, iter %d: incoming channel is closed. Thread is shutting down."
+                                                    thread-name iter))
+                               false)))))]
+                (if continue?
+                  (recur (unchecked-inc iter))
+                  (timbre/info (format "%s, iter %d: shutdown." thread-name iter))))
+              (do (timbre/info (format "%s, finished." thread-name))))))))))
+
+
+(defn ^ints test-grid-plus1
+  "Every thread will add 1 to each valid entry."
+  ([^AsyncGrid grid ^ints src ^ints expected f]
+   (test-grid-plus1 grid src expected f 1))
+  ([^AsyncGrid grid ^ints src ^ints expected f iterations]
+   {:pre [(<= 0 ^long iterations) (= (alength src) (count (grid 0 0))) (= (alength src) (alength expected))]
+    :post []}
+   (distribute-all grid node-plus1 [src f iterations])
+   (let [result (int-array (alength src))]
+     (doseq [[k [data [global-offset len local-offset]]] (a/<!! (collect-data grid #(= (count (:slices %)) 1)))]
+       (System/arraycopy data local-offset result global-offset len))
+     [(Arrays/equals result expected) result])))
+
