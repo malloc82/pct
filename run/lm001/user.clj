@@ -50,15 +50,16 @@
 (let [base-dir "datasets/data_4_Ritchie/exp_CTP404/10_24_2019"
       f (clojure.java.io/file base-dir)]
   (if (.isDirectory f)
-    (def data-index (with-open [dataset (pct.data.io/newPCTDataset
-                                         {:rows   200
-                                          :cols   200
-                                          :slices 16
-                                          :dir    "datasets/data_4_Ritchie/exp_CTP404/10_24_2019"
-                                          :path   "MLP_paths_r=1.bin"
-                                          :b      "WEPL.bin"})]
-                      (pct.data.io/load-dataset dataset {:min-len 30 :batch-size 80000 :style :new
-                                                         :count? true :global? false})))
+    (def data (with-open [dataset (pct.data.io/newPCTDataset
+                                   {:rows   200
+                                    :cols   200
+                                    :slices 16
+                                    :dir    "datasets/data_4_Ritchie/exp_CTP404/10_24_2019"
+                                    :path   "MLP_paths_r=1.bin"
+                                    :b      "WEPL.bin"})]
+                {:index (pct.data.io/load-dataset dataset {:min-len 0 :batch-size 80000 :style :new
+                                                           :count? true :global? false})
+                 :x0 (.x0 dataset)}))
     (timbre/info (format "Path [%s] does not exist or is not a folder." base-dir))))
 
 
