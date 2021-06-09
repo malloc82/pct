@@ -161,7 +161,7 @@
           (timbre/info (format "%s start: block [%d %d] %s"
                                thread-name (first slices) (count slices) [(* offset-x slice-offset) slice-offset]))
           ;; iter 0
-          (let [next-x local-x #_(loop [i (long 0)
+          (let [next-x (loop [i (long 0)
                               x local-x]
                          (if (< i h-size)
                            (recur (unchecked-inc i)
@@ -176,7 +176,7 @@
               (timbre/info (format "%s, iter %d, got data from %s" thread-name iter k))
               (System/arraycopy v (* offset-v slice-offset) local-x 0 length)
               (if (< iter iterations)
-                (let [next-x local-x #_(loop [i (long 0)
+                (let [next-x (loop [i (long 0)
                                     x local-x]
                                (if (< i h-size)
                                  (recur (unchecked-inc i)
@@ -185,10 +185,8 @@
                   #_(a/>!! out [key (Arrays/copyOf local-x data-len)])
                   (a/>!! out [key next-x])
                   (recur (unchecked-inc iter)))
-                (do (timbre/info (format " %s iter=%d, done. Sending out local-x" thread-name iter))
-                    (a/>!! res [key [local-x (:global-offset node)]])
-                    (a/close! res)
-                    (a/close! out)))))))
+                (do (timbre/info (format "!!%s iter=%d, done. Sending out local-x" thread-name iter))
+                    (a/>!! res [key [local-x (:global-offset node)]])))))))
 
 
       (a/thread
@@ -199,12 +197,12 @@
               h-size      ^int       (.size histories)]
           (timbre/info (format "%s started." thread-name))
           (loop [iter  (long 0)]
-            (if (<= iter iterations)
+            (if (< iter iterations)
               (let [continue?
                     (boolean
                      (loop [remaining (into #{} (keys offset-lut))]
                        (if (empty? remaining)
-                         (let [next-x local-x #_(loop [i (long 0)
+                         (let [next-x (loop [i (long 0)
                                              x local-x]
                                         (if (< i h-size)
                                           (recur (unchecked-inc i)
@@ -221,15 +219,13 @@
                              (do (timbre/info (format "%s, iter %d, could not find key %s, skip."
                                                       thread-name iter k))
                                  (recur remaining)))
-                           (do (timbre/info (format "%s, iter %d: incoming channel is closed. Thread is shutting down."
+                           (do (timbre/info (format "!!%s, iter %d: incoming channel is closed. Thread is shutting down."
                                                     thread-name iter))
-                               (a/close! res)
-                               (a/close! out)
                                false)))))]
                 (if continue?
                   (recur (unchecked-inc iter))
-                  (timbre/info (format "%s, iter %d: shutdown." thread-name iter))))
-              (do (timbre/info (format "%s, finished." thread-name))))))))))
+                  (timbre/info (format "!!%s, iter %d: shutdown." thread-name iter))))
+              (do (timbre/info (format "!!%s, finished." thread-name))))))))))
 
 
 
