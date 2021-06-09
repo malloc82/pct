@@ -246,7 +246,7 @@
 
 (defn prime
   "Returns largest prime smaller than n"
-  [^long n]
+  ^long [^long n]
   (let [plist ^ArrayList (prime-seq4 n)]
     (.get plist (unchecked-dec (.size plist)))))
 
