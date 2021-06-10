@@ -95,6 +95,26 @@
             :jvm-opts ^:replace ["-Dclojure.core.async.pool-size=72" "-Xmx256g"
                                  "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED"]}
 
+           :dev-repl/lm001-jmc
+           {:extra-deps {cider/cider-nrepl              {:mvn/version "0.26.0"}
+                         refactor-nrepl/refactor-nrepl  {:mvn/version "2.5.0"}
+                         nrepl/nrepl                    {:mvn/version "0.8.3"}
+                         org.clojure/tools.analyzer     {:mvn/version "1.0.0"}
+                         org.clojure/tools.analyzer.jvm {:mvn/version "1.1.0"}
+                         ,}
+            :main-opts  ["-m" "nrepl.cmdline" "-i" "-p" "8000"
+                         "--middleware" "[cider.nrepl/cider-middleware]"]
+            :jvm-opts ^:replace ["-Dclojure.core.async.pool-size=72" "-Xmx256g"
+                                 "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED"
+                                 ;; for remote JMC profiling.
+                                 ;; When forwarding ports, client port need to match server port
+                                 "-Dcom.sun.management.jmxremote=true"
+                                 "-Dcom.sun.management.jmxremote.port=7091"
+                                 "-Dcom.sun.management.jmxremote.rmi.port=7091"
+                                 "-Djava.rmi.server.hostname=localhost"
+                                 "-Dcom.sun.management.jmxremote.authenticate=false"
+                                 "-Dcom.sun.management.jmxremote.ssl=false"]}
+
            :dev-repl/local
            {:extra-deps {cider/cider-nrepl             {:mvn/version "0.26.0"}
                          ;; refactor-nrepl/refactor-nrepl {:mvn/version "2.5.0"}
