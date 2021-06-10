@@ -181,7 +181,7 @@
             (let [[k v] (a/<!! in)
                   [^long offset-v ^long length ^long offset-local] (get offset-lut k)]
               (timbre/info (format "%s, (%d), received data from %s" thread-name iter k))
-              (System/arraycopy v (* offset-v slice-offset) local-x 0 length)
+              (System/arraycopy v (* offset-v slice-offset) local-x 0 slice-offset #_(* length slice-offset))
               (if (< iter iterations)
                 (let [next-x (loop [i (long 0)
                                     x local-x]
@@ -232,7 +232,9 @@
                          (if-let [[k v] (a/<!! in)]
                            (if-let [[^long offset-v ^long length ^long offset-local] (get offset-lut k)]
                              (do (timbre/info (format "%s, (%d), received data from %s" thread-name iter k))
-                                 (System/arraycopy v (* offset-v slice-offset) local-x (* offset-local slice-offset) length)
+                                 (System/arraycopy v       (* offset-v     slice-offset)
+                                                   local-x (* offset-local slice-offset)
+                                                   (* length slice-offset))
                                  (recur (disj remaining k)))
                              (do (timbre/info (format "%s, (%d), could not find key %s, skip."
                                                       thread-name iter k))
