@@ -110,6 +110,7 @@
   (proj_art-2*  [this x lambda])
   (proj_art-3*  [this x lambda])
   (proj_art-4*  [this x lambda])
+  (proj_art-5*  [this x lambda])
   (proj_drop* [this x lambda hit-map]))
 
 (defprotocol IPathAccess
@@ -266,6 +267,26 @@
                 xi ^double (aget ^doubles x i)
                 v  (unchecked-add xi a)
                 next-k (unchecked-inc k)]
+            (if (= xi 0.0)
+              (recur next-k)
+              (do (aset ^doubles x i v)
+                  (recur next-k))))
+          x))))
+
+  (proj_art-5* [this x lambda]
+    (let [n ^int (alength path)
+          a (loop [i (long 0)
+                   sum (double 0.0)]
+              (if (< i n)
+                (recur (+ i 1) (+ sum ^double (aget ^doubles x ^int (aget path i))))
+                (* ^double lambda (/ (- (/ energy chord-len) sum)
+                                     n))))]
+      (loop [k (long 0)]
+        (if (< k n)
+          (let [i  ^int    (aget path k)
+                xi ^double (aget ^doubles x i)
+                v  (+ xi ^double a)
+                next-k (+ k 1)]
             (if (= xi 0.0)
               (recur next-k)
               (do (aset ^doubles x i v)

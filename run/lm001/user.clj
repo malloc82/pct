@@ -25,9 +25,9 @@
             pct.data.io
             pct.async.node
             [pct.reconstruction :as recon])
-  (:import [java.util ArrayList HashMap]))
+  (:import [java.util ArrayList HashMap TreeSet HashSet]))
 
-;; (set! *warn-on-reflection* true)
+(set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
 
 (let [mem (let [[s u] (pct.util.system/readableFormat pct.util.system/MaxMemory)]
@@ -51,16 +51,16 @@
 (let [base-dir "datasets/data_4_Ritchie/exp_CTP404/10_24_2019"
       f (clojure.java.io/file base-dir)]
   (if (.isDirectory f)
-    (def data (with-open [dataset (pct.data.io/newPCTDataset
-                                   {:rows   200
-                                    :cols   200
-                                    :slices 16
-                                    :dir    "datasets/data_4_Ritchie/exp_CTP404/10_24_2019"
-                                    :path   "MLP_paths_r=1.bin"
-                                    :b      "WEPL.bin"})]
-                {:index (pct.data.io/load-dataset dataset {:min-len 0 :batch-size 80000 :style :new
-                                                           :count? true :global? false})
-                 :x0 (.x0 dataset)}))
+    (def data (with-open [dataset ^pct.data.io.PCTDataset (pct.data.io/newPCTDataset
+                                                           {:rows   200
+                                                            :cols   200
+                                                            :slices 16
+                                                            :dir    "datasets/data_4_Ritchie/exp_CTP404/10_24_2019"
+                                                            :path   "MLP_paths_r=1.bin"
+                                                            :b      "WEPL.bin"})]
+                {:x0    (.x0 dataset)
+                 :index (pct.data.io/load-dataset dataset {:min-len 30 :batch-size 80000 :style :new
+                                                           :count? true :global? false})}))
     (timbre/info (format "Path [%s] does not exist or is not a folder." base-dir))))
 
 (def grid (pct.async.node/newAsyncGrid 16 5 true))
@@ -76,3 +76,17 @@
 ;;                (fn [x] (if (= (:id x) 2)
 ;;                         (assoc x :c "new str")
 ;;                         x)) maps)
+
+
+#_(time (def res (let [n (count (first ((:index data) 4 2)))
+                step ^long (prime (int (* (/ n 12) 0.382)))
+                s1 (HashSet. (range n))
+                s2 (HashSet.)]
+            (loop [i (long step)
+                   j (long 0)]
+              (if (= i 0)
+                (do (.add s2 0)
+                    [(.equals ^HashSet s2 ^HashSet s1) s1 s2])
+                (do (.add ^HashSet s2 i)
+                    (recur (mod (+ i step) n)
+                           (unchecked-inc j))))))))
