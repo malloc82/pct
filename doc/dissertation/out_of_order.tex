@@ -1,0 +1,238 @@
+\documentclass{assignment}
+\usepackage{standalone}
+
+\newtheorem{lemma}{Lemma}
+\newtheorem{sublemma}{Lemma}[lemma]
+% \renewcommand{\qedsymbol}{\rule{0.7em}{0.7em}}
+
+\begin{document}
+\title{Out of Order Algebraic Reconstruction Technique}
+\author{Ritchie Cai}
+
+Algebraic reconstruction technique (ART):
+\begin{align}
+x^{k+1} = x^{k} + \lambda_k \frac{b_i - \langle a_i, x^{k} \rangle}{\norm{a_i}^2} a_{i}^T \label{art_eqn}
+\end{align}
+
+We propose an order of $\{a_0, a_1, \dots, a_{n-1}\}$ for ART, where parts of the set can be projected out of order.
+
+
+\begin{lemma} \label{pair_orthognal}
+Any two adjacent rows in the order of projection, can be computed independently if the two rows are orthognal to each other.
+\end{lemma}
+
+\textbf{Proof:}
+
+\begin{align}
+  x^{k+1} & = x^{k} + \lambda_k \frac{b_i - \langle a_i, x^{k} \rangle}{\norm{a_i}^2} a_{i}^T \nonumber \\
+  x^{k+2} & = x^{k+1} + \lambda_{k+1} \frac{b_{i+1} - \langle a_{i+1}, x^{k+1} \rangle}{\norm{a_{i+1}}^2} a_{i+1}^T \nonumber \\
+          & = x^{k} + \lambda_k \frac{b_i - \langle a_i, x^{k} \rangle}{\norm{a_i}^2} a_{i}^T
+            + \lambda_{k+1} \frac{b_{i+1} - \langle a_{i+1}, x^{k+1} \rangle}{\norm{a_{i+1}}^2} a_{i+1}^T \label{art_consecutive_proj}
+\end{align}
+
+where
+\begin{align*}
+  \langle a_{i+1}, x^{k+1} \rangle
+  & = \left\langle a_{i+1},
+    x^{k} + \lambda_k \frac{b_i - \langle a_i, x^{k} \rangle}{\norm{a_i}^2} a_{i}^T \right\rangle \\
+  & = \langle a_{i+1}, x^{k}\rangle +
+    \left\langle a_{i+1}, \lambda_k \frac{b_i - \langle a_i, x^{k} \rangle}{\norm{a_i}^2} a_{i}^T \right\rangle \\
+\end{align*}
+
+Since
+
+\begin{align*}
+  \lambda_k \frac{b_i - \langle a_i, x^{k} \rangle} {\norm{a_i}^2} & = K \\
+  \intertext{where $K$ is a scalar}
+  \langle a_{i+1}, x^{k+1} \rangle & = \langle a_{i+1}, x^{k}\rangle + K \langle a_{i+1}, a_i^T\rangle
+\end{align*}
+
+If $a_i$ and $a_{i+1}$ are orthognal to each other, then
+
+\begin{align*}
+  \langle a_i, a_{i+1}^T\rangle & = 0 \\
+  \langle a_{i+1}, x^{k+1} \rangle & = \langle a_{i+1}, x^{k}\rangle + K0 = \langle a_{i+1}, x^{k}\rangle
+\end{align*}
+
+So, equation \ref{art_consecutive_proj} becomes
+
+\begin{align}
+  x^{k+2} & = x^{k} + \lambda_k \frac{b_i - \langle a_i, x^{k} \rangle}{\norm{a_i}^2} a_{i}^T
+            + \lambda_{k+1} \frac{b_{i+1} - \langle a_{i+1}, x^{k} \rangle}{\norm{a_{i+1}}^2} a_{i+1}^T \label{art_x_k+2_orthognal}
+\end{align}
+
+Now if we split $x^k$ into $x_1^k$ and $x_2^k$, so that
+\begin{align*}
+  x_1^k + x_2^k & = x^k \\
+  \left\langle x_1^k, {x_2^k}^T \right\rangle & = 0 \\
+  \left\langle a_{i}, x_1^k\right\rangle & = \left\langle a_i, x^k \right\rangle \\
+  \left\langle a_{i}, x_2^k\right\rangle & = 0 \\
+  \left\langle a_{i+1}, x_2^k\right\rangle & = \left\langle a_{i+1}, x^k \right\rangle \\
+  \left\langle a_{i+1}, x_1^k\right\rangle & = 0
+\end{align*}
+
+Then equation \ref{art_x_k+2_orthognal} becomes
+
+\begin{align*}
+x^{k+2} & = x_1^k + x_2^k + \lambda_k \frac{b_i - \langle a_i, x_1^{k} \rangle}{\norm{a_i}^2} a_{i}^T
+          + \lambda_{k+1} \frac{b_{i+1} - \langle a_{i+1}, x_2^{k} \rangle}{\norm{a_{i+1}}^2} a_{i+1}^T \\
+        & = \left( x_1^k + \lambda_k \frac{b_i - \langle a_i, x_1^{k} \rangle}{\norm{a_i}^2} a_{i}^T \right)
+          + \left( x_2^k + \lambda_{k+1} \frac{b_{i+1} - \langle a_{i+1}, x_2^{k} \rangle}{\norm{a_{i+1}}^2} a_{i+1}^T \right) \numberthis
+\end{align*}
+
+In this form we can calculate $x^{k+2}$ by calculating projection of $x_1^k$ to $a_i$ and $x_2^k$ to $a_{i+1}$
+independently and then sum them up. $\QED$
+
+
+% We can see that both projection terms now only in terms of $x^k$, there no reference to $x^{k+1}$ anymore. The consecutive projections
+% now becomes two consecutive additions which can be performed out of order. $\QED$
+
+
+\begin{lemma} \label{group_orthognal}
+Any group of adjacent rows in the order of projection, can be computed out of order if they are orthognal to each other and nonnegative.
+\end{lemma}
+
+\textbf{Proof:}
+
+Just like what we have shown in lemma \ref{pair_orthognal}, when we have $n$ rows orthognal to each other, we can split $x^k$ into
+$x_1^k$, $x_2^k$, $\dots$, $x_n^k$ where every pairs are orthognal to each other. Also,
+
+\begin{align*}
+  \left\langle a_i, x_1^k\right\rangle & = \left\langle a_i, x^k\right\rangle \\
+  \left\langle a_{i+1}, x_2^k\right\rangle & = \left\langle a_{i+1}, x^k\right\rangle \\
+                                       & \hdots \\
+  \left\langle a_{i+n-1}, x_n^k\right\rangle &= \left\langle a_{i+n-1}, x^k\right\rangle \\
+\end{align*}
+
+
+\begin{align*}
+x^{k+n} & = x_1^k + x_2^k + \dots + x_n^k + \lambda_k \frac{b_i - \langle a_i, x_1^{k} \rangle}{\norm{a_i}^2} a_{i}^T
+          + \lambda_{k+1} \frac{b_{i+1} - \langle a_{i+1}, x_2^{k} \rangle}{\norm{a_{i+1}}^2} a_{i+1}^T + \dots \\
+        & \quad + \lambda_{k+n-1} \frac{b_{i+n-1} - \langle a_{i+n-1}, x_n^{k} \rangle}{\norm{a_{i+n-1}}^2} a_{i+n-1}^T \\
+        & = \left( x_1^k + \lambda_k \frac{b_i - \langle a_i, x_1^{k} \rangle}{\norm{a_i}^2} a_{i}^T \right)
+          + \left( x_2^k + \lambda_{k+1} \frac{b_{i+1} - \langle a_{i+1}, x_2^{k} \rangle}{\norm{a_{i+1}}^2} a_{i+1}^T \right) + \dots \\
+        & \quad \left( x_n^k + \lambda_{k+n-1} \frac{b_{i+n-1} - \langle a_{i+n-1}, x_n^{k} \rangle}{\norm{a_{i+n-1}}^2} a_{i+n-1}^T \right)
+\end{align*}
+
+So we can calculate $x^{k+n}$ from $x^k$ simply by calculate projection of $\{a_i, a_{i+1}, \dots, a_{i+n-1}\}$ to different parts of $x^k$
+independently, in any order, then add them back together. $\QED$
+
+\begin{align}
+  x^{k+3} & = x^{k+2} + \lambda_{k+2} \frac{b_{i+2} - \langle a_{i+2}, x^{k+2} \rangle}{\norm{a_{i+2}}^2} a_{i+2}^T
+\end{align}
+
+Substitute equation \ref{art_x_k+2_orthognal}, we have
+\begin{align}
+  x^{k+3} & = x^{k} + \lambda_k \frac{b_i - \langle a_i, x^{k} \rangle}{\norm{a_i}^2} a_{i}^T
+            + \lambda_{k+1} \frac{b_{i+1} - \langle a_{i+1}, x^{k} \rangle}{\norm{a_{i+1}}^2} a_{i+1}^T
+            + \lambda_{k+2} \frac{b_{i+2} - \langle a_{i+2}, x^{k+2} \rangle}{\norm{a_{i+2}}^2} a_{i+2}^T
+\end{align}
+
+where
+
+\begin{align}
+  \langle a_{i+2}, x^{k+2} \rangle & = \left\langle a_{i+2},
+                                     x^{k} + \lambda_k \frac{b_i - \langle a_i, x^{k} \rangle}{\norm{a_i}^2} a_{i}^T +
+                                     \lambda_{k+1} \frac{b_{i+1} - \langle a_{i+1}, x^{k} \rangle}{\norm{a_{i+1}}^2} a_{i+1}^T\right\rangle \\
+                                   & = \langle a_{i+2}, x^{k}\rangle +
+                                     \lambda_k \frac{b_i - \langle a_i, x^{k} \rangle}{\norm{a_i}^2} \langle a_{i+2}, a_i^T\rangle +
+                                     \lambda_{k+1} \frac{b_{i+1} - \langle a_{i+1}, x^{k} \rangle}{\norm{a_{i+1}}^2} \langle a_{i+2}, a_{i+1}^T\rangle
+\end{align}
+
+Since, $a_i$, $a_{i+1}$ and $a_{i+2}$ are all orthognal to each other and nonnegative, we have
+
+\begin{align*}
+  \langle a_{i+2}, a_i^T \rangle & = 0 \\
+  \langle a_{i+2}, a_{i+1}^T \rangle & = 0
+\end{align*}
+
+Thus
+
+\begin{align*}
+  \langle a_{i+2}, x^{k+2} \rangle & = \langle a_{i+2},  x^{k}\rangle
+\end{align*}
+
+Again, just like in equation \ref{art_x_k+2_orthognal}, we have a similar situation:
+
+\begin{align}
+  x^{k+3} & = x^{k} + \lambda_k \frac{b_i - \langle a_i, x^{k} \rangle}{\norm{a_i}^2} a_{i}^T
+            + \lambda_{k+1} \frac{b_{i+1} - \langle a_{i+1}, x^{k} \rangle}{\norm{a_{i+1}}^2} a_{i+1}^T
+            + \lambda_{k+2} \frac{b_{i+2} - \langle a_{i+2}, x^{k} \rangle}{\norm{a_{i+2}}^2} a_{i+2}^T
+\end{align}
+
+where all three projection terms are in terms of $x^k$. They can be calculated independently and added to $x^k$ out of order.
+Using the exact argument, we can extend this to n consecutive orthognal projection terms, where
+
+\begin{align}
+  x^{k+n} & = x^{k} + \lambda_k \frac{b_i - \langle a_i, x^{k} \rangle}{\norm{a_i}^2} a_{i}^T
+            + \lambda_{k+1} \frac{b_{i+1} - \langle a_{i+1}, x^{k} \rangle}{\norm{a_{i+1}}^2} a_{i+1}^T + \dots
+            + \lambda_{k+n} \frac{b_{i+n} - \langle a_{i+n}, x^{k} \rangle}{\norm{a_{i+n}}^2} a_{i+n}^T
+\end{align}
+
+So n consecutive orthognal projections can be computed and added to $x^k$ out of order. $\QED$
+
+
+\begin{lemma} \label{orthognal_groups}
+  If two groups of rows are orthognal with each other, i.e. every rows from one group is orthognal with every rows from
+the other groups, then the two groups' projections can be calculated in any order, i.e. before, after or even intertwine
+with each other, as long as within each group the projections are calculated in the same order.
+\end{lemma}
+
+\textbf{Proof:}
+
+Let's assume a projection sequence as follows:
+\begin{align}
+  x^{k+n} & = x^{k} + \lambda_k \frac{b_i - \langle a_i, x^{k} \rangle}{\norm{a_i}^2} a_{i}^T
+            + \lambda_{k+1} \frac{b_{i+1} - \langle a_{i+1}, x^{k+1} \rangle}{\norm{a_{i+1}}^2} a_{i+1}^T + \dots
+            + \lambda_{k+n} \frac{b_{i+n} - \langle a_{i+n}, x^{k+n} \rangle}{\norm{a_{i+n}}^2} a_{i+n}^T \nonumber\\
+          & \quad + \lambda_{k+n+1} \frac{b_{i+n+1} - \langle a_{i+n+1}, x^{k+n+1} \rangle}{\norm{a_{i+n+1}}^2} a_{i+n+1}^T + \dots
+                  + \lambda_{k+n+m} \frac{b_{i+n+m} - \langle a_{i+n+m}, x^{k+n+m} \rangle}{\norm{a_{i+n+m}}^2} a_{i+n+m}^T \label{group_proj}
+\end{align}
+
+If every row in $\{a_{i}, a_{i+1}, \dots, a_{i+n}\}$ is orthognal to every row in $\{a_{i+n+1}, a_{i+n+2}, \dots, a_{i+n+m}\}$, then
+using lemma \ref{pair_orthognal}, we can write equation \ref{group_proj} as 
+
+\begin{align}
+  x^{k+n} & = x^{k} + \lambda_k \frac{b_i - \langle a_i, x^{k} \rangle}{\norm{a_i}^2} a_{i}^T
+            + \lambda_{k+1} \frac{b_{i+1} - \langle a_{i+1}, x^{k+1} \rangle}{\norm{a_{i+1}}^2} a_{i+1}^T + \dots
+            + \lambda_{k+n} \frac{b_{i+n} - \langle a_{i+n}, x^{k+n} \rangle}{\norm{a_{i+n}}^2} a_{i+n}^T \nonumber\\
+          & \quad + \lambda_{k+n+1} \frac{b_{i+n+1} - \langle a_{i+n+1}, x^{k} \rangle}{\norm{a_{i+n+1}}^2} a_{i+n+1}^T + \dots
+                  + \lambda_{k+n+m} \frac{b_{i+n+m} - \langle a_{i+n+m}, x^{k+m} \rangle}{\norm{a_{i+n+m}}^2} a_{i+n+m}^T \nonumber
+\end{align}
+
+Since projection terms $i+n+1$ to $i+n+m$ are not dependent on the results from any of the terms from $i$ to $i+n$, due to communtative
+property of addition, we can move them up to any position we like as long as within $i+n+1$ to $i+n+m$, they are still follow the same
+order. So group $i$ to $i+n$ and group $i+n+1$ to $i+n+m$ can be computed completely independent of each other. $\QED$
+
+
+
+
+\begin{lemma} \label{orthognal_groups}
+  If two or more groups of rows are orthognal with each other, i.e. every rows from any of groups are orthognal with every rows from
+any other groups, then the 
+\end{lemma}
+% So \ref{art_eqn} becomes
+% \begin{align}
+% x^{k+1} = x^{k} + K_{a_i} a_{i}^T \label{art_simple}
+% \end{align}
+
+% Since $K_{a_i}$ is a scalar, only non-zero entries of $a_i$ will be added to $x_k$.
+
+% Consider two rows of a nonnegative matrix $A$, $a_i$ and $a_{i+1}$. If they are orthognal, i.e., $\langle  a_i, a_{i+1} \rangle = 0$,
+% when applying \ref{art_simple}, they are essentially updating completely different parts of $x$, no intersection.
+% Therefore, if they are adjacent to each other in the projection order, the order of these two can be computed out of order.
+% So
+
+% From lemma \ref{pair_orthognal} we can also derive that
+
+Let's divide $x$ into $n$ sections, we refer them as $x_0$, $x_1$, $\dots$, $x_{n-1}$. We then group all the rows of nonnegative $A$
+into such a way that $a[0]$ referring to rows only update $x_0$, $a[1]$ only updates $x_1$, $a[0,1]$ referring to
+rows only updates $x_0 and x_1$, $a[2,3]$ referring to rows only update $x_2$ and $x_3$ and so on.
+
+
+Let's also define $|a|$ to be the number of sections of $x$ a particular rows updates. So $|a| = 1$ referring to all the rows that
+only update one section, that includes $a[0]$, $a[1]$, $\dots$, $a[n-1]$. For any rows that end 
+
+
+\end{document}
+
