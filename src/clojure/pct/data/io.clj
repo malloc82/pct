@@ -260,6 +260,17 @@
                   vctr
                   str-vals)))))
 
+(defn ^doubles load-double-array
+  [filename]
+  (with-open [rdr (io/reader filename)]
+    (let [str-vals (s/split (slurp rdr) #"\s+")
+          len (count str-vals)
+          data (double-array len)
+          it (clojure.lang.RT/iter str-vals)]
+      (dotimes [i len]
+        (aset data i (java.lang.Double/parseDouble (.next it))))
+      data)))
+
 (defn load-series [prefix & {:keys [rows cols slices ext iter] :or {rows 200 cols 200 slices 16 ext "txt" iter 0}}]
   ;;Verify files
   (dotimes [i slices]

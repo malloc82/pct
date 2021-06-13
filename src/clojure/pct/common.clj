@@ -554,6 +554,23 @@
           [_min _max]))
       nil)))
 
+
+(defn min-max-doubles [^doubles a]
+  (let [len (alength a)]
+    (if (> len 0)
+      (loop [i (long 1)
+             _min ^double (aget a 0)
+             _max ^double (aget a 0)]
+        (if (< i len)
+          (let [v (aget a i)]
+            (if (< v _min)
+              (recur (unchecked-inc i) v _max)
+              (if (> v _max)
+                (recur (unchecked-inc i) _min v)
+                (recur (unchecked-inc i) _min _max))))
+          [_min _max]))
+      nil)))
+
 (defn trim-ints
   ([^ints src ^long offset]
    (trim-ints src offset false))
@@ -613,3 +630,34 @@
           (recur (inc r))))
       (if in-place (copy! _m m) _m))))
 
+(defn median-filter3
+  "meidan filter for double-array"
+  [^doubles arr [^long rows ^long cols] & {:keys [radius in-place] :or {radius 2 in-place false}}]
+  {:pre [(= (alength arr) (* rows cols))]}
+  (let [radius  (int radius)
+        alen    (alength arr)
+        n       (inc (* radius 2))
+        r_end   (- rows 2)
+        c_end   (- cols 2)
+        m_size  (* n n)
+        mid     (int (quot m_size 2))
+        mask    (double-array m_size)
+        arr2    (java.util.Arrays/copyOf arr alen)]
+    (loop [r radius, top-left (long 0), idx (+ (* r cols) radius)]
+      (when (< r r_end)
+        (loop [c radius, top-left top-left, idx idx]
+          (when (< c c_end)
+            (loop [i (long 0), a_offset top-left, m_offset (long 0)]
+              (when (< i n)
+                (System/arraycopy arr a_offset mask m_offset n)
+                (recur (unchecked-inc i) (+ a_offset cols) (+ m_offset n))))
+            #_(dotimes [i n]
+              (System/arraycopy arr (+ top-left (* i cols)) mask (* i n) n))
+            (java.util.Arrays/sort mask)
+            (aset arr2 idx (aget mask mid))
+            (recur (inc c) (inc top-left) (inc idx))))
+        (recur (inc r) (+ top-left cols) (+ idx cols))))
+    (if in-place
+      (do (System/arraycopy arr2 0 arr 0 alen)
+          arr)
+      arr2)))
