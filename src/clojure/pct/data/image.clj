@@ -17,7 +17,7 @@
   (:import javax.imageio.ImageIO
            [java.util Arrays]
            (java.awt.image BufferedImage Raster WritableRaster)
-           (javax.swing JFrame JLabel)
+           (javax.swing JFrame JLabel JPanel)
            (java.awt Graphics Dimension Color)
            (uncomplicate.neanderthal.internal.host.buffer_block RealGEMatrix)))
 
@@ -62,8 +62,8 @@
         height (or height (+ (.getHeight im) 30))
         canvas (proxy [JLabel] []
                  (paint [g]
-                   (.drawImage ^Graphics g im 0 0 this)
-                   #_(.drawImage ^Graphics g im 0 0 (.getWidth ^JLabel this) (.getHeight ^JLabel this) this)))]
+                   #_(.drawImage ^Graphics g im 0 0 this)
+                   (.drawImage ^Graphics g im 0 0 (.getWidth ^JLabel this) (.getHeight ^JLabel this) this)))]
     {:jframe (doto (JFrame.)
                (.add canvas)
                (.setSize (Dimension. width height))
