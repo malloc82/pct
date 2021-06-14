@@ -28,7 +28,7 @@
                                      true)
                                    false))))))
 
-(spec/def ::int-seq? (spec/coll-of int?))
+(spec/def ::int-seq? (spec/coll-of (spec/and int? pos?)))
 (spec/def ::slice-id? (spec/and int? #(not (neg? %))))
 (spec/def ::continuous-slice-ids? (spec/and (spec/coll-of ::slice-id?)
                                             ::continuous?))
@@ -492,32 +492,24 @@
 
 
 (defn newAsyncGrid2
-  ([slice-count blocks]
-   (newAsyncGrid2 slice-count blocks nil))
-  ([slice-count blocks connect?]
-   {:pre [(spec/valid? ::int-seq? blocks) (< 0 (apply min (sort blocks)))]}
-   (let [node-map ^HashMap (HashMap. ^int (reduce + (map (fn [n] (int (- 16 (dec n)))) blocks))) ;; good estimate on size
+  ([slice-count block-sizes & {:keys [connect?]}]
+   {:pre [(spec/valid? ::int-seq? block-sizes)]}
+   (let [node-map ^HashMap (HashMap. ^int (reduce + (map (fn [n] (int (- 16 (dec n)))) block-sizes))) ;; good estimate on size
          slice-idx (range slice-count)
-         block-gen  (fn [block-size]
-                      (->> (range block-size)
-                           (mapv (fn [bi]
-                                   (->> slice-idx
-                                        ;; get the starting index of each block
-                                        (filterv #(and (= (mod % block-size) bi) (<= (+ % block-size) slice-count)))
-                                        ;; ((fn [x] (println (mapv #(range % (+ % s)) x)) ", " x))
-                                        (mapv #(let [node (newAsyncNode (range % (+ % block-size)))]
-                                                 (.put node-map (:key node) node)
-                                                 node)))))
-                           (filterv #(not (empty? %)))))
-         _blocks (mapv #(block-gen %) blocks #_(range 1 (inc max-block-size)))
-         grid   (AsyncGrid. (int slice-count) (apply max blocks) (into {} node-map) _blocks)]
+         block-gen (fn [block-size]
+                     (->> (range block-size)
+                          (mapv (fn [start-idx] ;; start-idx -> vector of nodes
+                                  (->> (partition block-size (range start-idx slice-count))
+                                       (mapv #(let [node (newAsyncNode %)]
+                                                (.put node-map (:key node) node)
+                                                node)))))))
+         blocks (mapv #(block-gen %) block-sizes)
+         grid   (AsyncGrid. (int slice-count) (apply max block-sizes) (into {} node-map) blocks)]
      (if connect?
        (doto grid
          (connect-nodes)
          (compute-offsets))
-       grid)
-     #_(map->AsyncGrid {:slice-count (int slice-count) :max-block-size (int max-block-size)
-                        :lut (into {} node-map) :grid blocks}))))
+       grid))))
 
 
 

@@ -63,8 +63,16 @@
                                                            :count? true :global? false})}))
     (timbre/info (format "Path [%s] does not exist or is not a folder." base-dir))))
 
-(def grid (pct.async.node/newAsyncGrid 16 5 true))
-(time (def image (recon/async-art grid (:index data) (:x0 data) 6)))
+#_(def grid (pct.async.node/newAsyncGrid 16 5 true))
+(def grid (pct.async.node/newAsyncGrid2 16 (range 1 (+ 1 5)) :connect? true))
+(time (def image (recon/async-art grid (:index data) (:x0 data)
+                                  {:iterations 6
+                                   :lambda {1 0.0025
+                                            2 0.0025
+                                            3 0.0025
+                                            4 0.0025
+                                            5 0.0025
+                                            6 0.0025}})))
 
 
 ;; (def maps [{:a "Example1" :b {:c "Example2" :id 1}}
@@ -90,3 +98,23 @@
                 (do (.add ^HashSet s2 i)
                     (recur (mod (+ i step) n)
                            (unchecked-inc j))))))))
+
+
+(def _rows 15)
+(def _cols 15)
+(def radius 2)
+
+(loop [r radius
+       top-left 0
+       idx (+ (* r _cols) radius)]
+  (when (< r (- _rows radius))
+    (loop [c radius
+           top-left top-left
+           idx idx]
+      (when (< c (- _cols radius))
+        (print [top-left (+ (* r _cols) c) idx])
+        (print " ")
+        (recur (inc c) (inc top-left) (inc idx))))
+    (println "")
+    (recur (inc r) (+ top-left _cols) (+ idx _cols))))
+

@@ -2,6 +2,7 @@
   (:use clojure.core)
   (:require pct.data pct.async.node
             [clojure.core.async :as a]
+            [clojure.spec.alpha :as spec]
             [pct.common :refer [with-out-str-data-map prime]]
             [taoensso.timbre :as timbre]
             [uncomplicate.neanderthal
@@ -141,9 +142,11 @@
           x))))])
 
 
-(defn block-recon [^pct.async.node.AsyncNode node ^pct.data.HistoryIndex global-index ^RealBlockVector init-x ^long iterations]
+(defn block-recon [^pct.async.node.AsyncNode node ^pct.data.HistoryIndex global-index ^RealBlockVector init-x
+                   config]
   (let [{slices :slices, in :ch-in, out :ch-out, res :ch-log, key :key, offset-lut :local-offsets} node
-        slice-offset (long (pct.data/slice-size* global-index))]
+        slice-offset (long (pct.data/slice-size* global-index))
+        default-iterations (long 3)]
     (if (= (count slices) 1)
       (a/thread
         (let [[^long offset-x ^long length ^long offset-local] (:global-offset node)
@@ -154,7 +157,9 @@
               [^ArrayList histories _]  (global-index (first slices) (count slices))
               h-size    ^int       (.size histories)
               step (long (prime (Math/round (* (/ h-size 12.0) 0.618))))
-              shuffled-data ^objects (object-array h-size)]
+              shuffled-data ^objects (object-array h-size)
+              iterations (long (or (:iterations config) default-iterations))
+              lambda (-> config :lambda (get 1))]
           (transfer! v local-x)
           (Collections/sort histories)
           (when (< 0 h-size)
@@ -172,7 +177,7 @@
                               x local-x]
                          (if (< i h-size)
                            (recur (+ i 1)
-                                  (pct.data/proj_art-5* ^pct.data.PathData (aget shuffled-data i) x 0.0025))
+                                  (pct.data/proj_art-5* ^pct.data.PathData (aget shuffled-data i) x lambda))
                            x))]
             #_(a/>!! out [key (Arrays/copyOf local-x data-len)])
             (a/>!! out [key next-x])
@@ -187,7 +192,7 @@
                                     x local-x]
                                (if (< i h-size)
                                  (recur (+ i 1)
-                                        (pct.data/proj_art-5* ^pct.data.PathData (aget shuffled-data i) x 0.0025))
+                                        (pct.data/proj_art-5* ^pct.data.PathData (aget shuffled-data i) x lambda))
                                  x))]
                   #_(a/>!! out [key (Arrays/copyOf local-x data-len)])
                   (a/>!! out [key next-x])
@@ -197,13 +202,16 @@
 
 
       (a/thread
-        (let [data-len    (* slice-offset (count slices))
+        (let [s-len  ^int (count slices)
+              data-len    (* slice-offset (count slices))
               local-x     (double-array data-len)
               thread-name (format "--> Thread [%15s]" key)
               [^ArrayList histories _]  (global-index (first slices) (count slices))
               h-size      ^int       (.size histories)
               step  (long (prime (Math/round (* (/ h-size 12.0) 0.618))))
-              shuffled-data ^objects (object-array h-size)]
+              shuffled-data ^objects (object-array h-size)
+              iterations (long (or (:iterations config) default-iterations))
+              lambda (-> config :lambda (get s-len))]
           (timbre/info (format "%s started." thread-name))
           (Collections/sort histories)
           (when (< 0 h-size)
@@ -224,7 +232,7 @@
                                              x local-x]
                                         (if (< i h-size)
                                           (recur (+ i 1)
-                                                 (pct.data/proj_art-5* ^pct.data.PathData (aget shuffled-data i) x 0.0025))
+                                                 (pct.data/proj_art-5* ^pct.data.PathData (aget shuffled-data i) x lambda))
                                           x))]
                            (timbre/info (format "%s, (%d), sending local-x" thread-name iter))
                            (a/>!! out [key next-x])
@@ -249,10 +257,12 @@
 
 
 
-(defn async-art [^pct.async.node.AsyncGrid grid ^pct.data.HistoryIndex global-index ^RealBlockVector init-x ^long iterations]
-  {:pre [(<= 0 iterations)]
+(defn async-art [^pct.async.node.AsyncGrid grid ^pct.data.HistoryIndex global-index ^RealBlockVector init-x config]
+  {:pre [(if-let [iter (:iterations config)]
+           (spec/valid? (spec/and pos? int?) iter)
+           true)]
    :post []}
-  (pct.async.node/distribute-all grid block-recon [global-index init-x iterations])
+  (pct.async.node/distribute-all grid block-recon [global-index init-x config])
   (let [slice-offset (long (pct.data/slice-size* global-index))
         final-x ^RealBlockVector (zero init-x)]
     #_(a/<!! (pct.async.node/collect-data grid #(= (count (:slices %)) 1)))
