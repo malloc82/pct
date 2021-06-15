@@ -144,14 +144,16 @@
 
   (connect-upstream [this upstream-node]
     (let [usage (get-overlap upstream-node this)]
-      (if-not (empty? usage)
-        (do ;; (.removeAll ^TreeSet (:unused upstream-node) usage)
-          ;; (add-node (:downstream upstream-node) key usage)
-          (add-node upstream (:key upstream-node) usage)
-          (a/tap (:mux-out upstream-node) ch-in)
-          (connect-downstream* upstream-node key usage)
-          true)
-        false)))
+      (if ((:key upstream-node) (:connection upstream))
+        true
+        (if-not (empty? usage)
+          (do ;; (.removeAll ^TreeSet (:unused upstream-node) usage)
+            ;; (add-node (:downstream upstream-node) key usage)
+            (add-node upstream (:key upstream-node) usage)
+            (a/tap (:mux-out upstream-node) ch-in)
+            (connect-downstream* upstream-node key usage)
+            true)
+          false))))
 
   (connect-downstream* [this downstream-key shared-slices]
     (add-node downstream downstream-key shared-slices)
@@ -191,19 +193,19 @@
   (updateProperty [this k f] (swap! Properties update k f))
   (getProperty [this k]    (get @Properties k))
   (getProperties [this]    @Properties)
-  (clearProperties! [this] (reset! Properties {}))
-  )
+  (clearProperties! [this] (reset! Properties {})))
 
 
 (defn newAsyncNode
   ([slices]
-   (newAsyncNode slices false))
-  ([slices head?]
-   {:pre [(spec/valid? ::continuous-slice-ids? slices)]
+   (newAsyncNode slices :body))
+  ([slices type]
+   {:pre [(spec/valid? ::continuous-slice-ids? slices)
+          (spec/valid? #{:head :body :fake} type)]
     :post []}
    (let [ch-out (a/chan 4)
          n (int (count slices))]
-     (map->AsyncNode {:type       (if head? :head :body)
+     (map->AsyncNode {:type       type
                       :ch-in      (a/chan 4)
                       :ch-out     ch-out
                       :mux-out    (a/mult ch-out)
@@ -231,8 +233,11 @@
 
 (def grid-walker (recursive-path [] p (if-path vector? [ALL p] STAY)))
 
-(deftype AsyncGrid [^int slice-count ^int max-block-size
-                    ^clojure.lang.PersistentHashMap lut ^clojure.lang.PersistentVector grid]
+(deftype AsyncGrid [^int slice-count
+                    ^clojure.lang.PersistentVector  block-sizes ;; should be sorted from small to large
+                    ^clojure.lang.PersistentHashMap heads
+                    ^clojure.lang.PersistentHashMap lut
+                    ^clojure.lang.PersistentVector  grid]
   clojure.lang.Counted
   (count [this] (count lut))
 
@@ -374,7 +379,7 @@
                                        (let [n (+ n (count unused))]
                                          (doseq [i unused]
                                            (let [k (keyword (str i))
-                                                 d (k lut)]
+                                                 d (k heads)]
                                              (connect-upstream d x)))
                                          (recur (next nodes) n))))
                                    n)))]
@@ -406,7 +411,11 @@
                            (- seg-head up-head)
                            (count v)
                            (- seg-head local-head)])
-            (.put local-offsets k  [(- seg-head up-head) (count v) (- seg-head local-head)]))))))
+            (try
+              (.put local-offsets k  [(- seg-head up-head) (count v) (- seg-head local-head)])
+              (catch java.lang.NullPointerException e
+                (println (:slices node) seg-head up-head k (k lut))
+                (throw e))))))))
 
   (distribute-selected [this cond-fn f]
     (loop [s (select [grid-walker cond-fn] grid)]
@@ -467,7 +476,7 @@
         (a/admix mix-out (:ch-log d)))
       log-ch)))
 
-(defn newAsyncGrid
+#_(defn newAsyncGrid
   ([slice-count max-block-size]
    (newAsyncGrid slice-count max-block-size nil))
   ([slice-count max-block-size connect?]
@@ -495,24 +504,35 @@
                         :lut (into {} node-map) :grid blocks}))))
 
 
-(defn newAsyncGrid2
+(defn newAsyncGrid
   ([slice-count block-sizes & {:keys [connect?]}]
    {:pre [(spec/valid? ::int-seq? block-sizes)]}
-   (let [node-map ^HashMap (HashMap. ^int (reduce + (map (fn [n] (int (- 16 (dec n)))) block-sizes))) ;; good estimate on size
+   (let [sorted-block-sizes (sort block-sizes)
+         node-map  ^HashMap (HashMap. ^int (reduce + (map (fn [n] (int (- slice-count (dec n)))) block-sizes))) ;; good estimate on size
          ;; slice-idx (range slice-count)
-         head (first (sort block-sizes))
+         head-size (first sorted-block-sizes)
+         head-nodes ^HashMap (HashMap.)
          block-gen (fn [block-size]
                      (->> (range block-size)
                           (mapv (fn [start-idx] ;; start-idx -> vector of nodes
-                                  (->> (partition block-size (range start-idx slice-count))
-                                       (mapv #(let [node (if (and (= block-size head)
+                                  (->> (if (and (= block-size head-size) (= start-idx 0))
+                                         (partition-all block-size (range start-idx slice-count))
+                                         (partition     block-size (range start-idx slice-count)))
+                                       (mapv #(let [node (if (and (= block-size head-size)
                                                                   (= start-idx 0))
-                                                           (newAsyncNode % true)
-                                                           (newAsyncNode % false))]
+                                                           (if (= block-size (count %))
+                                                             (newAsyncNode % :head)
+                                                             (newAsyncNode % :fake))
+                                                           (newAsyncNode % :body))]
                                                 (.put node-map (:key node) node)
+                                                (let [type (:type node)]
+                                                  (when (or (= type :head) (= type :fake))
+                                                    (doseq [i (:slices node)]
+                                                      (.put head-nodes (keyword (str i)) node))
+                                                    (.put head-nodes (:key node) node)))
                                                 node)))))))
          blocks (mapv #(block-gen %) block-sizes)
-         grid   (AsyncGrid. (int slice-count) (apply max block-sizes) (into {} node-map) blocks)]
+         grid   (AsyncGrid. (int slice-count) (vec sorted-block-sizes) (into {} head-nodes) (into {} node-map) blocks)]
      (if connect?
        (doto grid
          (connect-nodes)

@@ -148,7 +148,8 @@
         slice-offset (long (pct.data/slice-size* global-index))
         slice-count  (count slices)
         default-iterations (long 3)]
-    (if (= (:type node) :head) #_(= (count slices) 1)
+    (case (:type node)
+      :head
       (a/thread
         (let [[^long offset-x ^long length ^long offset-local] (:global-offset node)
               v (subvector init-x (* offset-x slice-offset) (* slice-offset slice-count))
@@ -201,7 +202,7 @@
                 (do (timbre/info (format "!!%s (%d), done. Sending out local-x" thread-name iter))
                     (a/>!! res [key [local-x (:global-offset node)]])))))))
 
-
+      :body
       (a/thread
         (let [data-len    (* slice-offset slice-count)
               local-x     (double-array data-len)
@@ -254,7 +255,18 @@
                 (if continue?
                   (recur (unchecked-inc iter))
                   (timbre/info (format "!!%s, iter %d: shutdown." thread-name iter))))
-              (do (timbre/info (format "!!%s, finished." thread-name))))))))))
+              (do (timbre/info (format "!!%s, finished." thread-name)))))))
+      :fake
+      (a/go
+        (let [thread-name (format "...   Fake [%15s]" key)]
+          (timbre/info (format "!!%s: start forwarding." thread-name))
+          (loop []
+            (if-let [[k v] (a/<! in)]
+              (if (= k :stop)
+                (do (timbre/info (format "!!%s: stop forwarding." thread-name)) nil)
+                (do (a/>! [key v])
+                    (recur)))
+              (do (timbre/info (format "!!%s: input channel closed, stop forwarding." thread-name)) nil))))))))
 
 
 
