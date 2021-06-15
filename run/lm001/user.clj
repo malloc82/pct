@@ -1,6 +1,8 @@
 (ns user
   (:use clojure.core)
   (:require pct.util.system
+            [pct.data.test  :refer :all]
+            [pct.data.image :refer :all]
             [taoensso.timbre :as timbre]
             [clojure.core.async :as a]
             [clojure.spec.alpha :as spec]
@@ -11,13 +13,8 @@
             [com.rpl.specter :as spr]
             [uncomplicate.neanderthal
              [core :refer :all]
-             [block :refer [buffer contiguous?]]
              [native :refer :all]]
             [uncomplicate.neanderthal.auxil :refer :all]
-            [uncomplicate.neanderthal.internal
-             [api :as api]]
-            [uncomplicate.neanderthal.internal.host
-             [mkl :as mkl]]
             [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]]
             [pct.common :refer [prime]]
             [pct.data.util :refer :all]
@@ -60,19 +57,31 @@
                                                             :b      "WEPL.bin"})]
                 {:x0    (.x0 dataset)
                  :index (pct.data.io/load-dataset dataset {:min-len 30 :batch-size 80000 :style :new
-                                                           :count? true :global? false})}))
+                                                           :count? false :global? false})}))
     (timbre/info (format "Path [%s] does not exist or is not a folder." base-dir))))
 
 #_(def grid (pct.async.node/newAsyncGrid 16 5 true))
-(def grid (pct.async.node/newAsyncGrid2 16 (range 1 (+ 1 5)) :connect? true))
-(time (def image (recon/async-art grid (:index data) (:x0 data)
-                                  {:iterations 6
-                                   :lambda {1 0.0025
-                                            2 0.0025
-                                            3 0.0025
-                                            4 0.0025
-                                            5 0.0025
-                                            6 0.0025}})))
+(def grid  (pct.async.node/newAsyncGrid 16 (range 1 (+ 1 5)) :connect? true))
+;; (def grid2  (pct.async.node/newAsyncGrid 16 (range 2 (+ 2 1)) :connect? true))
+;; (def grid3  (pct.async.node/newAsyncGrid 15 (range 2 (+ 2 1)) :connect? true))
+;; (def grid4  (pct.async.node/newAsyncGrid 17 (range 3 (+ 3 2)) :connect? true))
+
+(time (def result (recon/async-art grid (:index data) (:x0 data)
+                                   {:iterations 6
+                                    :lambda {1 0.0005
+                                             2 0.0005
+                                             3 0.0005
+                                             4 0.0005
+                                             5 0.0005}})))
+
+;; (def slice_6 (subvector image (* 6 200 200) (* 200 200)))
+
+;; (def slice_6_arr (double-array (* 200 200)))
+;; (transfer! slice_6 slice_6_arr)
+
+;; (imshow slice_6_arr [200 200])
+
+;; (def slice_6_stat (test/slice-stat slice_6 [200 200]))
 
 
 ;; (def maps [{:a "Example1" :b {:c "Example2" :id 1}}
@@ -100,21 +109,21 @@
                            (unchecked-inc j))))))))
 
 
-(def _rows 15)
-(def _cols 15)
-(def radius 2)
+;; (def _rows 15)
+;; (def _cols 15)
+;; (def radius 2)
 
-(loop [r radius
-       top-left 0
-       idx (+ (* r _cols) radius)]
-  (when (< r (- _rows radius))
-    (loop [c radius
-           top-left top-left
-           idx idx]
-      (when (< c (- _cols radius))
-        (print [top-left (+ (* r _cols) c) idx])
-        (print " ")
-        (recur (inc c) (inc top-left) (inc idx))))
-    (println "")
-    (recur (inc r) (+ top-left _cols) (+ idx _cols))))
+;; (loop [r radius
+;;        top-left 0
+;;        idx (+ (* r _cols) radius)]
+;;   (when (< r (- _rows radius))
+;;     (loop [c radius
+;;            top-left top-left
+;;            idx idx]
+;;       (when (< c (- _cols radius))
+;;         (print [top-left (+ (* r _cols) c) idx])
+;;         (print " ")
+;;         (recur (inc c) (inc top-left) (inc idx))))
+;;     (println "")
+;;     (recur (inc r) (+ top-left _cols) (+ idx _cols))))
 
