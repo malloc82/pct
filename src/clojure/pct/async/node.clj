@@ -195,23 +195,27 @@
   )
 
 
-(defn newAsyncNode [slices]
-  {:pre [(spec/valid? ::continuous-slice-ids? slices)]
-   :post []}
-  (let [ch-out (a/chan 4)
-        n (int (count slices))]
-    (map->AsyncNode {:ch-in      (a/chan 4)
-                     :ch-out     ch-out
-                     :mux-out    (a/mult ch-out)
-                     :ch-log     (a/chan 4)
-                     :key        (keyword (clojure.string/join "-" slices))
-                     :slices     (into (sorted-set) slices)
-                     :unused     (TreeSet. ^java.util.Collection slices)
-                     :upstream   (newNodeConnection n)
-                     :downstream (newNodeConnection n)
-                     :global-offset [(int (first slices)) n (int 0)] ;; offset-x, length, offset-y
-                     :local-offsets (HashMap. n)
-                     :properties (atom {})})))
+(defn newAsyncNode
+  ([slices]
+   (newAsyncNode slices false))
+  ([slices head?]
+   {:pre [(spec/valid? ::continuous-slice-ids? slices)]
+    :post []}
+   (let [ch-out (a/chan 4)
+         n (int (count slices))]
+     (map->AsyncNode {:type       (if head? :head :body)
+                      :ch-in      (a/chan 4)
+                      :ch-out     ch-out
+                      :mux-out    (a/mult ch-out)
+                      :ch-log     (a/chan 4)
+                      :key        (keyword (clojure.string/join "-" slices))
+                      :slices     (into (sorted-set) slices)
+                      :unused     (TreeSet. ^java.util.Collection slices)
+                      :upstream   (newNodeConnection n)
+                      :downstream (newNodeConnection n)
+                      :global-offset [(int (first slices)) n (int 0)] ;; offset-x, length, offset-y
+                      :local-offsets (HashMap. n)
+                      :properties (atom {})}))))
 
 
 (defprotocol IAsyncGrid
@@ -495,12 +499,16 @@
   ([slice-count block-sizes & {:keys [connect?]}]
    {:pre [(spec/valid? ::int-seq? block-sizes)]}
    (let [node-map ^HashMap (HashMap. ^int (reduce + (map (fn [n] (int (- 16 (dec n)))) block-sizes))) ;; good estimate on size
-         slice-idx (range slice-count)
+         ;; slice-idx (range slice-count)
+         head (first (sort block-sizes))
          block-gen (fn [block-size]
                      (->> (range block-size)
                           (mapv (fn [start-idx] ;; start-idx -> vector of nodes
                                   (->> (partition block-size (range start-idx slice-count))
-                                       (mapv #(let [node (newAsyncNode %)]
+                                       (mapv #(let [node (if (and (= block-size head)
+                                                                  (= start-idx 0))
+                                                           (newAsyncNode % true)
+                                                           (newAsyncNode % false))]
                                                 (.put node-map (:key node) node)
                                                 node)))))))
          blocks (mapv #(block-gen %) block-sizes)
