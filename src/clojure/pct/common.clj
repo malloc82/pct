@@ -556,11 +556,10 @@
 
 
 (defn min-max-doubles [^doubles a]
-  (let [len (alength a)]
+  (let [len (alength a)
+        _m ^double (aget a 0)]
     (if (> len 0)
-      (loop [i (long 1)
-             _min ^double (aget a 0)
-             _max ^double (aget a 0)]
+      (loop [i (long 1), _min _m, _max _m]
         (if (< i len)
           (let [v (aget a i)]
             (if (< v _min)
@@ -570,6 +569,20 @@
                 (recur (unchecked-inc i) _min _max))))
           [_min _max]))
       nil)))
+
+(defn min-max-doubles2 [^doubles a]
+  (let [it (clojure.lang.RT/iter a)
+        _m ^double (.next it)]
+    (loop [_min ^double _m
+           _max ^double _m]
+      (if (.hasNext it)
+        (let [v ^double (.next it)]
+          (if (< v _min)
+              (recur v _max)
+              (if (> v _max)
+                (recur _min v)
+                (recur _min _max))))
+        [_min _max]))))
 
 (defn trim-ints
   ([^ints src ^long offset]

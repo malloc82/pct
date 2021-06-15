@@ -248,8 +248,20 @@
             (recur rst (unchecked-add offset (long rows))))
           vctr))))
 
+
 (defn load-vctr
-  ([filename vctr]
+  (^RealBlockVector [filename]
+   (with-open [rdr (io/reader filename)]
+     (let [str-vals (s/split (slurp rdr) #"\s+")
+           len (count str-vals)
+           v ^RealBlockVector (dv len)
+           it (clojure.lang.RT/iter str-vals)]
+       (loop [i (long 0)]
+         (if (.hasNext it)
+           (do (v i (java.lang.Double/parseDouble (.next it)))
+               (recur (unchecked-inc i)))
+           v)))))
+  (^RealBlockVector [filename vctr]
    ;; (println "load-vctr2 v0.2")
    (with-open [rdr (io/reader filename)]
      (let [str-vals (s/split (slurp rdr) #"\s+")]
@@ -260,8 +272,8 @@
                   vctr
                   str-vals)))))
 
-(defn ^doubles load-double-array
-  [filename]
+(defn load-double-array
+  ^doubles [filename]
   (with-open [rdr (io/reader filename)]
     (let [str-vals (s/split (slurp rdr) #"\s+")
           len (count str-vals)
@@ -270,6 +282,14 @@
       (dotimes [i len]
         (aset data i (java.lang.Double/parseDouble (.next it))))
       data)))
+
+(defn load-slice
+  [filename opts]
+  (case (:type opts)
+    :array  (load-double-array filename)
+    :vector (load-vctr filename)
+    (do (println "Unknow type"))))
+
 
 (defn load-series [prefix & {:keys [rows cols slices ext iter] :or {rows 200 cols 200 slices 16 ext "txt" iter 0}}]
   ;;Verify files

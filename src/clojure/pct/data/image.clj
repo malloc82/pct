@@ -8,18 +8,17 @@
              [auxil :refer :all]
              [math :as math]
              [random :as random]]
-            [uncomplicate.fluokitten.core :refer [fmap fmap!]]
-            [uncomplicate.neanderthal.internal
+            #_[uncomplicate.fluokitten.core :refer [fmap fmap!]]
+            #_[uncomplicate.neanderthal.internal
              [api :as api]]
-            [uncomplicate.neanderthal.internal.host
-             [mkl :as mkl]]
-            [uncomplicate.neanderthal.random :refer :all])
+            #_[uncomplicate.neanderthal.internal.host
+             [mkl :as mkl]])
   (:import javax.imageio.ImageIO
            [java.util Arrays]
            (java.awt.image BufferedImage Raster WritableRaster)
            (javax.swing JFrame JLabel JPanel)
            (java.awt Graphics Dimension Color)
-           (uncomplicate.neanderthal.internal.host.buffer_block RealGEMatrix)))
+           (uncomplicate.neanderthal.internal.host.buffer_block RealGEMatrix RealBlockVector)))
 
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
@@ -28,8 +27,11 @@
 
 (defmethod imshow RealGEMatrix
   [^RealGEMatrix m & {:keys [title]}]
-  (println "here")
-  (let [m    (copy m)
+  (let [rows (mrows m), cols (ncols m)
+        arr (double-array (* rows cols))]
+    (transfer! (view-vctr m) arr)
+    (imshow arr [rows cols] :title title :copy? false))
+  #_(let [m    (copy m)
         rows ^int (int (mrows m))
         cols ^int (int (ncols m))
         image ^BufferedImage (BufferedImage. cols rows BufferedImage/TYPE_BYTE_GRAY)
@@ -42,10 +44,27 @@
     (.setPixels ^WritableRaster (.getRaster image) 0 0 cols rows (double-array data))
     (imshow image :title title)))
 
+
+(defmethod imshow RealBlockVector
+  [^RealBlockVector v [^long rows ^long cols] & {:keys [title]}]
+  (let [arr (double-array (* rows cols))]
+    (transfer! v arr)
+    (imshow arr [rows cols] :title title :copy? false))
+  #_(let [len ^int (dim v)
+          data ^doubles (copy v)
+          image ^BufferedImage (BufferedImage. cols rows BufferedImage/TYPE_BYTE_GRAY)
+          [^double _min ^double _max] (min-max-doubles arr)
+          _r ^double (- _max _min)]
+      (if (not= _r 0.0)
+        (dotimes [i len]
+          (aset data i (* (/ (- (aget data i) _min) _r) 255))))
+      (.setPixels ^WritableRaster (.getRaster image) 0 0 cols rows data)
+      (imshow image :title title)))
+
 (defmethod imshow (Class/forName "[D")
-  [^doubles arr [^long rows ^long cols] & {:keys [title]}]
+  [^doubles arr [^long rows ^long cols] & {:keys [title copy?] :or {copy? true}}]
   (let [len ^int (alength arr)
-        data ^doubles (Arrays/copyOf arr len)
+        data ^doubles (if copy? (Arrays/copyOf arr len) arr)
         image ^BufferedImage (BufferedImage. cols rows BufferedImage/TYPE_BYTE_GRAY)
         [^double _min ^double _max] (min-max-doubles arr)
         _r ^double (- _max _min)]
@@ -53,7 +72,19 @@
       (dotimes [i len]
         (aset data i (* (/ (- (aget data i) _min) _r) 255))))
     (.setPixels ^WritableRaster (.getRaster image) 0 0 cols rows data)
-    (imshow image :title title)))
+    #_(imshow image :title title)
+    (let [canvas (proxy [JLabel] []
+                   (paint [g]
+                     #_(.drawImage ^Graphics g im 0 0 this)
+                     (.drawImage ^Graphics g image 0 0 (.getWidth ^JLabel this) (.getHeight ^JLabel this) this)))]
+      {:jframe (doto (JFrame.)
+               (.add canvas)
+               (.setSize (Dimension. (+ cols 15) (+ rows 45)))
+               (.setTitle ^String (str (or title "no name")))
+               (.show)
+               (.toFront)
+               (.setVisible true))
+       :image image})))
 
 (defmethod imshow java.awt.image.BufferedImage
   [^BufferedImage im & {:keys [title width height]}]
