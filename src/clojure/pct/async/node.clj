@@ -221,9 +221,10 @@
 
 
 (defprotocol IAsyncGrid
-  (get-grid [this])
+  (get-heads [this])
+  (get-grid  [this])
   (get-table [this])
-  (connect-nodes [this])
+  (connect-nodes   [this])
   (compute-offsets [this])
 
   (distribute-selected [this cond-fn f] [this cond-fn f args] "apply f to selected nodes, filtered by cond-fn")
@@ -235,7 +236,8 @@
 
 (deftype AsyncGrid [^int slice-count
                     ^clojure.lang.PersistentVector  block-sizes ;; should be sorted from small to large
-                    ^clojure.lang.PersistentHashMap heads
+                    ^clojure.lang.PersistentHashSet head-nodes
+                    ^clojure.lang.PersistentHashMap lut-heads
                     ^clojure.lang.PersistentHashMap lut
                     ^clojure.lang.PersistentVector  grid]
   clojure.lang.Counted
@@ -285,6 +287,7 @@
     (clojure.lang.RT/iter (select grid-walker grid)))
 
   IAsyncGrid
+  (get-heads [this] head-nodes)
   (get-grid  [this] grid)
   (get-table [this] lut)
 
@@ -379,7 +382,7 @@
                                        (let [n (+ n (count unused))]
                                          (doseq [i unused]
                                            (let [k (keyword (str i))
-                                                 d (k heads)]
+                                                 d (k lut-heads)]
                                              (connect-upstream d x)))
                                          (recur (next nodes) n))))
                                    n)))]
@@ -442,8 +445,17 @@
         (apply f node args)
         (recur (next s)))))
 
-  (collect-data [this]
-    (collect-data this (fn [_] true)))
+  (collect-data [this] ;; collection data from head nodes
+    (a/go
+      (loop [remaining (into #{} (mapv :ch-log head-nodes))
+             acc (transient {})]
+        ;; (timbre/info (format "collect-data: remaining %s" remaining))
+        (if (empty? remaining)
+          (persistent! acc)
+          (let [[[k data] ch] (a/alts! (vec remaining))]
+            (if k
+              (recur (disj remaining ch) (assoc! acc k data))
+              (recur (disj remaining ch) acc)))))))
 
   (collect-data [this cond-fn]
     (a/go
@@ -511,7 +523,7 @@
          node-map  ^HashMap (HashMap. ^int (reduce + (map (fn [n] (int (- slice-count (dec n)))) block-sizes))) ;; good estimate on size
          ;; slice-idx (range slice-count)
          head-size (first sorted-block-sizes)
-         head-nodes ^HashMap (HashMap.)
+         head-map ^HashMap (HashMap.)
          block-gen (fn [block-size]
                      (->> (range block-size)
                           (mapv (fn [start-idx] ;; start-idx -> vector of nodes
@@ -528,11 +540,16 @@
                                                 (let [type (:type node)]
                                                   (when (or (= type :head) (= type :fake))
                                                     (doseq [i (:slices node)]
-                                                      (.put head-nodes (keyword (str i)) node))
-                                                    (.put head-nodes (:key node) node)))
+                                                      (.put head-map (keyword (str i)) node))
+                                                    (.put head-map (:key node) node)))
                                                 node)))))))
          blocks (mapv #(block-gen %) block-sizes)
-         grid   (AsyncGrid. (int slice-count) (vec sorted-block-sizes) (into {} head-nodes) (into {} node-map) blocks)]
+         grid   (AsyncGrid. (int slice-count)
+                            (vec sorted-block-sizes)
+                            (into #{} (vals head-map))
+                            (into {} head-map)
+                            (into {} node-map)
+                            blocks)]
      (if connect?
        (doto grid
          (connect-nodes)

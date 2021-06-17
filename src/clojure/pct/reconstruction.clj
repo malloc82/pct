@@ -143,120 +143,116 @@
 
 
 (defn block-recon [^pct.async.node.AsyncNode node ^pct.data.HistoryIndex global-index ^RealBlockVector init-x
-                   config]
-  (let [{slices :slices, in :ch-in, out :ch-out, res :ch-log, key :key, offset-lut :local-offsets} node
+                   opts]
+  (let [{type :type, slices :slices, in :ch-in, out :ch-out, res :ch-log, key :key, offset-lut :local-offsets} node
         slice-offset (long (pct.data/slice-size* global-index))
         slice-count  (count slices)
         default-iterations (long 3)]
-    (case (:type node)
-      :head
+    (cond
+      (= type :head)
       (a/thread
         (let [[^long offset-x ^long length ^long offset-local] (:global-offset node)
-              v (subvector init-x (* offset-x slice-offset) (* slice-offset slice-count))
-              local-x (double-array (dim v))
-              data-len slice-offset
+              data-len (* slice-offset slice-count)
               thread-name (format ">>>   Head [%15s]" key)
               [^ArrayList histories _]  (global-index (first slices) slice-count)
-              h-size    ^int       (.size histories)
-              step (long (prime (Math/round (* (/ h-size 12.0) 0.618))))
-              shuffled-data ^objects (object-array h-size)
-              iterations (long (or (:iterations config) default-iterations))
-              lambda (-> config :lambda (get slice-count))]
+              h-size        ^int     (.size histories)
+              shuffled-data (let [arr (object-array h-size)]
+                              (if (< 0 h-size)
+                                (let [step (long (prime (Math/round (* 0.618 (double (/ h-size 12))))))]
+                                  (Collections/sort histories)
+                                  (loop [j (long 0), i step]
+                                    (if (= i 0)
+                                      (aset arr j (.get histories 0))
+                                      (do (aset arr j (.get histories i))
+                                          (recur (unchecked-inc j) (long (mod (+ i step) h-size))))))))
+                              arr)
+              iterations (long (or (:iterations opts) default-iterations))
+              lambda (-> opts :lambda (get slice-count))
+              local-x (transfer! (subvector init-x (* offset-x slice-offset) data-len)
+                                 (double-array data-len))]
           (timbre/info (format "%s: start: block [%d %d] %s, lambda = %.7f"
                                thread-name (first slices) slice-count [(* offset-x slice-offset) slice-offset] lambda))
-          (transfer! v local-x)
-          (Collections/sort histories)
-          (when (< 0 h-size)
-            (loop [i step
-                   j (long 0)]
-              (if (= i 0)
-                (aset shuffled-data j (.get histories i))
-                (do (aset shuffled-data j (.get histories i))
-                    (recur (long (mod (+ i step) h-size))
-                           (unchecked-inc j))))))
           ;; iter 0
-          (let [next-x (loop [i (long 0)
-                              x local-x]
-                         (if (< i h-size)
-                           (recur (unchecked-inc i)
-                                  (pct.data/proj_art-5* ^pct.data.PathData (aget shuffled-data i) x lambda))
-                           x))]
-            #_(a/>!! out [key (Arrays/copyOf local-x data-len)])
-            (a/>!! out [key next-x])
-            (timbre/info (format "%s, (%d) : data sent." thread-name 0)))
-          (loop [iter (long 1)]
-            (let [[k v] (a/<!! in)
-                  [^long offset-v ^long length ^long offset-local] (get offset-lut k)]
-              (timbre/info (format "%s, (%d), received data from %s" thread-name iter k))
-              (System/arraycopy v (* offset-v slice-offset) local-x 0 slice-offset #_(* length slice-offset))
-              (if (< iter iterations)
-                (let [next-x (loop [i (long 0)
-                                    x local-x]
-                               (if (< i h-size)
-                                 (recur (unchecked-inc i)
-                                        (pct.data/proj_art-5* ^pct.data.PathData (aget shuffled-data i) x lambda))
-                                 x))]
-                  #_(a/>!! out [key (Arrays/copyOf local-x data-len)])
-                  (a/>!! out [key next-x])
-                  (recur (unchecked-inc iter)))
-                (do (timbre/info (format "!!%s (%d), done. Sending out local-x" thread-name iter))
-                    (a/>!! res [key [local-x (:global-offset node)]])))))))
 
-      :body
+          (loop [iter (long 0)]
+            (if (< iter iterations)
+              (do (dotimes [i h-size]
+                    (pct.data/proj_art-5* ^pct.data.PathData (aget ^objects shuffled-data i) local-x lambda))
+                  (a/>!! out [key local-x])
+                  (timbre/info (format "%s, (%d) : data sent." thread-name iter))
+                  (let [continue?
+                        (loop [remaining (into #{} (keys offset-lut))]
+                          (if (empty? remaining)
+                            true
+                            (if-let [[^clojure.lang.Keyword k ^doubles v] (a/<!! in)]
+                              (if-let [[^long offset-v ^long length ^long offset-local] (k offset-lut)]
+                                (do (timbre/info (format "%s, (%d), received data from %s" thread-name iter k))
+                                    (System/arraycopy v       (* offset-v     slice-offset)
+                                                      local-x (* offset-local slice-offset)
+                                                      (* length slice-offset))
+                                    (recur (disj remaining k)))
+                                (do (timbre/info (format "%s, (%d), could not find key %s, skip."
+                                                         thread-name iter k))
+                                    (recur remaining)))
+                              (do (timbre/info (format "!!%s, (%d): incoming channel is closed."
+                                                       thread-name iter))
+                                  nil))))]
+                    (if continue?
+                      (recur (unchecked-inc iter))
+                      (do (timbre/info (format "!!%s (%d), stopped, recon incomplete." thread-name iter))))))
+              (do (timbre/info (format "!!%s (%d), done. Sending out local-x" thread-name iter))
+                  (a/>!! res [key [local-x (:global-offset node)]]))))))
+
+      (= type :body)
       (a/thread
         (let [data-len    (* slice-offset slice-count)
-              local-x     (double-array data-len)
               thread-name (format "--> Thread [%15s]" key)
               [^ArrayList histories _]  (global-index (first slices) slice-count)
-              h-size      ^int       (.size histories)
-              step  (long (prime (Math/round (* (/ h-size 12.0) 0.618))))
-              shuffled-data ^objects (object-array h-size)
-              iterations (long (or (:iterations config) default-iterations))
-              lambda (-> config :lambda (get slice-count))]
+              h-size        ^int     (.size histories)
+              shuffled-data (let [arr (object-array h-size)]
+                              (if (< 0 h-size)
+                                (let [step (long (prime (Math/round (* 0.618 (double (/ h-size 12))))))]
+                                  (Collections/sort histories)
+                                  (loop [j (long 0), i step]
+                                    (if (= i 0)
+                                      (aset arr j (.get histories 0))
+                                      (do (aset arr j (.get histories i))
+                                          (recur (unchecked-inc j) (long (mod (+ i step) h-size))))))))
+                              arr)
+              iterations (long (or (:iterations opts) default-iterations))
+              lambda     (-> opts :lambda (get slice-count))
+              local-x    (double-array data-len)]
           (timbre/info (format "%s: start: block [%d %d], lambda = %.7f"
                                thread-name (first slices) slice-count  lambda))
-          (Collections/sort histories)
-          (when (< 0 h-size)
-            (loop [i step
-                   j (long 0)]
-              (if (= i 0)
-                (aset shuffled-data j (.get histories i))
-                (do (aset shuffled-data j (.get histories i))
-                    (recur (long (mod (+ i step) h-size))
-                           (unchecked-inc j))))))
-          (loop [iter  (long 0)]
+          (loop [iter (long 0)]
             (if (< iter iterations)
               (let [continue?
-                    (boolean
-                     (loop [remaining (into #{} (keys offset-lut))]
-                       (if (empty? remaining)
-                         (let [next-x (loop [i (long 0)
-                                             x local-x]
-                                        (if (< i h-size)
-                                          (recur (unchecked-inc i)
-                                                 (pct.data/proj_art-5* ^pct.data.PathData (aget shuffled-data i) x lambda))
-                                          x))]
-                           (timbre/info (format "%s, (%d), sending local-x" thread-name iter))
-                           (a/>!! out [key next-x])
-                           true)
-                         (if-let [[k v] (a/<!! in)]
-                           (if-let [[^long offset-v ^long length ^long offset-local] (get offset-lut k)]
-                             (do (timbre/info (format "%s, (%d), received data from %s" thread-name iter k))
-                                 (System/arraycopy v       (* offset-v     slice-offset)
-                                                   local-x (* offset-local slice-offset)
-                                                   (* length slice-offset))
-                                 (recur (disj remaining k)))
-                             (do (timbre/info (format "%s, (%d), could not find key %s, skip."
-                                                      thread-name iter k))
-                                 (recur remaining)))
-                           (do (timbre/info (format "!!%s, (%d): incoming channel is closed. Thread is shutting down."
-                                                    thread-name iter))
-                               false)))))]
+                    (loop [remaining (into #{} (keys offset-lut))]
+                      (if (empty? remaining)
+                        (do (dotimes [i h-size]
+                              (pct.data/proj_art-5* ^pct.data.PathData (aget ^objects shuffled-data i) local-x lambda))
+                            (a/>!! out [key local-x])
+                            (timbre/info (format "%s, (%d) : data sent." thread-name iter))
+                            true)
+                        (if-let [[^clojure.lang.Keyword k ^doubles v] (a/<!! in)]
+                          (if-let [[^long offset-v ^long length ^long offset-local] (k offset-lut)]
+                            (do (timbre/info (format "%s, (%d), received data from %s" thread-name iter k))
+                                (System/arraycopy v       (* offset-v     slice-offset)
+                                                  local-x (* offset-local slice-offset)
+                                                  (* length slice-offset))
+                                (recur (disj remaining k)))
+                            (do (timbre/info (format "%s, (%d), could not find key %s, skip."
+                                                     thread-name iter k))
+                                (recur remaining)))
+                          (do (timbre/info (format "!!%s, (%d): incoming channel is closed."
+                                                   thread-name iter))
+                              nil))))]
                 (if continue?
                   (recur (unchecked-inc iter))
-                  (timbre/info (format "!!%s, iter %d: shutdown." thread-name iter))))
-              (do (timbre/info (format "!!%s, finished." thread-name)))))))
-      :fake
+                  (do (timbre/info (format "!!%s (%d), stopped, recon incomplete." thread-name iter)))))
+              (do (timbre/info (format "!!%s (%d), finished." thread-name iter)))))))
+
+      (= type :fake)
       (a/go
         (let [thread-name (format "...   Fake [%15s]" key)]
           (timbre/info (format "!!%s: start forwarding." thread-name))
@@ -266,24 +262,39 @@
                 (do (timbre/info (format "!!%s: stop forwarding." thread-name)) nil)
                 (do (a/>! [key v])
                     (recur)))
-              (do (timbre/info (format "!!%s: input channel closed, stop forwarding." thread-name)) nil))))))))
+              (do (timbre/info (format "!!%s: input channel closed, stop forwarding." thread-name)) nil)))))
+      :else
+      (a/go (timbre/info (format "Unrecongnized type inf node [%s]" key))))))
 
 
 
-(defn async-art [^pct.async.node.AsyncGrid grid ^pct.data.HistoryIndex global-index ^RealBlockVector init-x config]
-  {:pre [(if-let [iter (:iterations config)]
+(defn async-art [^pct.async.node.AsyncGrid grid ^pct.data.HistoryIndex global-index ^RealBlockVector init-x opts]
+  {:pre [(if-let [iter (:iterations opts)]
            (spec/valid? (spec/and pos? int?) iter)
            true)]
    :post []}
-  (pct.async.node/distribute-all grid block-recon [global-index init-x config])
+  (pct.async.node/distribute-all grid block-recon [global-index init-x opts])
   (let [slice-offset (long (pct.data/slice-size* global-index))
         final-x ^RealBlockVector (zero init-x)]
     #_(a/<!! (pct.async.node/collect-data grid #(= (count (:slices %)) 1)))
-    (doseq [[k [data [^long global-offset ^long len ^long local-offset]]]
-            (a/<!! (pct.async.node/collect-data grid #(= (:type %) :head) #_#(= (count (:slices %)) 1)))]
+    (doseq [[k [data [^long global-offset ^long len ^long local-offset]]] (a/<!! (pct.async.node/collect-data grid))]
       ;; (println k [global-offset len local-offset])
       (let [v (subvector final-x (* global-offset slice-offset) slice-offset)]
         (transfer! data v)))
     final-x))
 
 
+(defn async-art-test [^pct.async.node.AsyncGrid grid ^pct.data.HistoryIndex global-index ^RealBlockVector init-x opts]
+  {:pre [(if-let [iter (:iterations opts)]
+           (spec/valid? (spec/and pos? int?) iter)
+           true)]
+   :post []}
+  (pct.async.node/distribute-all grid block-recon [global-index init-x opts])
+  (let [slice-offset (long (pct.data/slice-size* global-index))
+        final-x ^RealBlockVector (zero init-x)]
+    (doseq [[k [data [^long global-offset ^long len ^long local-offset]]]
+            (a/<!! (pct.async.node/collect-data grid #(= (:type %) :head)))]
+      (let [v (subvector final-x (* global-offset slice-offset) slice-offset)]
+        (transfer! data v)))
+    final-x)
+  )
