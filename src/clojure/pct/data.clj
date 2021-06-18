@@ -7,6 +7,7 @@
             [clojure.string :as s]
             [clojure.core.async :as a :refer  [<!! >!! go go-loop <! >! put! close! alts! chan timeout thread]]
             [taoensso.timbre :as timbre]
+            [uncomplicate.fluokitten.core :refer [fmap fmap!]]
             [uncomplicate.neanderthal
              [core :refer :all]
              [block :refer [buffer contiguous?]]
@@ -111,6 +112,8 @@
   (proj_art-3*  [this x lambda])
   (proj_art-4*  [this x lambda])
   (proj_art-5*  [this x lambda])
+  (proj_art-6*  [this x lambda])
+  (proj_art-7*  [this x lambda])
   (proj_drop* [this x lambda hit-map]))
 
 (defprotocol IPathAccess
@@ -285,7 +288,22 @@
         (if (< k n)
           (let [i  ^int    (aget path k)
                 xi ^double (aget ^doubles x i)
-                v  (+ xi ^double a)
+                next-k (unchecked-inc k)]
+            (if (= xi 0.0)
+              (aset ^doubles x i (+ xi ^double a)))
+            (recur next-k))
+          x))))
+
+  (proj_art-6* [this x lambda]
+    (let [n ^int (alength path)
+          a (* ^double lambda (/ (- (/ energy chord-len)
+                                    (reduce + 0.0 (fmap #(aget ^doubles x %) path)))
+                                 n))]
+      (loop [k (long 0)]
+        (if (< k n)
+          (let [i  ^int    (aget path k)
+                xi ^double (aget ^doubles x i)
+                v  (+ xi a)
                 next-k (+ k 1)]
             (if (= xi 0.0)
               (recur next-k)

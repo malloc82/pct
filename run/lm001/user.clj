@@ -56,7 +56,7 @@
                                                             :path   "MLP_paths_r=1.bin"
                                                             :b      "WEPL.bin"})]
                 {:x0    (.x0 dataset)
-                 :index (pct.data.io/load-dataset dataset {:min-len 30 :batch-size 80000 :style :new
+                 :index (pct.data.io/load-dataset dataset {:min-len 120 :batch-size 80000 :style :new
                                                            :count? false :global? false})}))
     (timbre/info (format "Path [%s] does not exist or is not a folder." base-dir))))
 
@@ -73,6 +73,8 @@
                                              3 0.0005
                                              4 0.0005
                                              5 0.0005}})))
+
+
 
 ;; (def slice_6 (subvector image (* 6 200 200) (* 200 200)))
 
