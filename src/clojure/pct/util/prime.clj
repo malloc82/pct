@@ -180,32 +180,78 @@
 (def ^{:private true :tag 'ints} _primes_ (int-array (prime-seq4 2000000)))
 
 (defn seed-primes [^long n]
-  (def _primes_ (int-array (prime-seq4 n))))
+  (def ^ints _primes_ (int-array (prime-seq4 n))))
 
 
-(defn prime-search ^long [^long x]
-  (let [len (alength _primes_)]
-    (println "len = " len)
-    (loop [a (int 0)
-           d (dec len)
-           b (- d (Math/round (* len gr)))
-           c (+ a (Math/round (* len gr)))]
-      ;; (println a b c d)
-      (let [plist-c ^int (aget ^ints _primes_ c)
-            plist-b ^int (aget ^ints _primes_ b)]
-        (cond
-          (< (- d a) 2)
-          #_[(aget _primes_ a) (aget _primes_ d)]
-          (aget _primes_ a)
+(defn prime-search
+  (^long [^long x]
+   (let [len (alength _primes_)]
+     #_(println "len = " len)
+     (loop [a (int 0)
+            d (dec len)
+            b (- d (Math/round (* len gr)))
+            c (+ a (Math/round (* len gr)))]
+       ;; (println a b c d)
+       (let [plist-c ^int (aget ^ints _primes_ c)
+             plist-b ^int (aget ^ints _primes_ b)]
+         (cond
+           (< (- d a) 2)
+           #_[(aget _primes_ a) (aget _primes_ d)]
+           (aget _primes_ a)
 
-          (= x plist-b)
-          plist-b
+           (= x plist-b)
+           plist-b
 
-          (= x plist-c)
-          plist-c
+           (= x plist-c)
+           plist-c
 
-          (< plist-b x)
-          (recur b d c (+ b (Math/round (* (- d b) gr))))
+           (< plist-b x)
+           (recur b d c (+ b (Math/round (* (- d b) gr))))
 
-          (< x plist-c)
-          (recur a c (- c (Math/round (* (- c a) gr))) b))))))
+           (< x plist-c)
+           (recur a c (- c (Math/round (* (- c a) gr))) b)))))))
+
+
+(defn co-prime
+  "Given a i-th prime and integer n, find a prime,
+   starting from i-th and downward, that is co-prime with n"
+  ^long [^long i ^long n]
+  (loop [i i]
+    (if (<= 0 i)
+      (let [p (aget _primes_ i)]
+        (if (= (rem n p) 0)
+          (recur (unchecked-dec i))
+          p))
+      1)))
+
+(defn co-prime-step
+  (^long [^long x ^long n]
+   (let [len (alength _primes_)]
+     #_(println "len = " len)
+     (loop [a (int 0)
+            d (dec len)
+            b (- d (Math/round (* len gr)))
+            plist-b ^int (aget ^ints _primes_ b)
+            c (+ a (Math/round (* len gr)))
+            plist-c ^int (aget ^ints _primes_ c)]
+       ;; (println a b c d)
+       (cond
+         (< (- d a) 2)
+         #_[(aget _primes_ a) (aget _primes_ d)]
+         (co-prime a n)
+
+         (= x plist-b)
+         (co-prime b n)
+
+         (= x plist-c)
+         (co-prime c n)
+
+         (< plist-b x)
+         (let [next-c (+ b (Math/round (* (- d b) gr)))]
+          (recur b d c plist-c next-c (aget _primes_ next-c)))
+
+         (< x plist-c)
+         (let [next-b (- c (Math/round (* (- c a) gr)))]
+           (recur a c next-b (aget _primes_ next-b) b plist-b)))))))
+
+

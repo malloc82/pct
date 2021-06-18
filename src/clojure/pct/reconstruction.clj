@@ -3,7 +3,8 @@
   (:require pct.data pct.async.node
             [clojure.core.async :as a]
             [clojure.spec.alpha :as spec]
-            [pct.common :refer [with-out-str-data-map prime prime-seq]]
+            [pct.common :refer [with-out-str-data-map]]
+            [pct.util.prime :as prime]
             [taoensso.timbre :as timbre]
             [uncomplicate.neanderthal
              [core :refer :all]
@@ -16,8 +17,7 @@
              [mkl :as mkl]]
             [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]])
   (:import [java.util ArrayList Iterator Arrays Collections]
-           [uncomplicate.neanderthal.internal.host.buffer_block IntegerBlockVector RealBlockVector]
-           ))
+           [uncomplicate.neanderthal.internal.host.buffer_block IntegerBlockVector RealBlockVector]))
 
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
@@ -141,7 +141,7 @@
           (recur (unchecked-inc i) (+ x (v (rand-int n))))
           x))))])
 
-(defn find-prime-step ^long [^long n]
+#_(defn find-prime-step ^long [^long n]
   (let [s (long (if (< n 300)
                   (Math/round (* 0.618 n))
                   (Math/round (* 0.618 (double (/ n 12))))))
@@ -153,6 +153,15 @@
           (if (= (rem n p) 0)
             (recur (unchecked-dec i))
             p))))))
+
+(defn find-prime-step ^long [^long n]
+  (let [s (long (if (< n 500)
+                  (Math/round (* 0.618 n))
+                  (Math/round (* 0.618 (double (/ n 12))))))]
+    (cond
+      (< 3 s) (prime/co-prime-step s n)
+      (<= s 3) 1
+      :else 0)))
 
 (defn block-recon [^pct.async.node.AsyncNode node ^pct.data.HistoryIndex global-index ^RealBlockVector init-x
                    opts]
@@ -169,7 +178,7 @@
               [^ArrayList histories _]  (global-index (first slices) slice-count)
               h-size  ^long (long (.size histories))
               step    ^long (find-prime-step h-size)
-              _ (timbre/info (format "%s: prime step = %d" thread-name step))
+              ;; _ (timbre/info (format "%s: prime step = %d" thread-name step))
               shuffled-data (let [arr (object-array h-size)]
                               (when (< 0 h-size)
                                 (Collections/sort histories)
@@ -183,8 +192,9 @@
               lambda (-> opts :lambda (get slice-count))
               local-x (transfer! (subvector init-x (* offset-x slice-offset) data-len)
                                  (double-array data-len))]
-          (timbre/info (format "%s: start: block [%d %d] %s, lambda = %.7f"
-                               thread-name (first slices) slice-count [(* offset-x slice-offset) slice-offset] lambda))
+          (timbre/info (format "%s: start: block [%d %d] %s, h-size = %d, prime step = %d, lambda = %.7f"
+                               thread-name (first slices) slice-count [(* offset-x slice-offset) slice-offset]
+                               h-size step lambda))
           (loop [iter (long 0)]
             (if (< iter iterations)
               (do (dotimes [i h-size]
@@ -221,7 +231,7 @@
               [^ArrayList histories _]  (global-index (first slices) slice-count)
               h-size  ^long   (long (.size histories))
               step    ^long   (find-prime-step h-size)
-              _ (timbre/info (format "%s: prime step = %d" thread-name step))
+              ;; _ (timbre/info (format "%s: prime step = %d" thread-name step))
               shuffled-data (let [arr (object-array h-size)]
                               (when (< 0 h-size)
                                 (Collections/sort histories)
@@ -234,8 +244,8 @@
               iterations (long (or (:iterations opts) default-iterations))
               lambda     (-> opts :lambda (get slice-count))
               local-x    (double-array data-len)]
-          (timbre/info (format "%s: start: block [%d %d], lambda = %.7f"
-                               thread-name (first slices) slice-count  lambda))
+          (timbre/info (format "%s: start: block [%d %d], h-size = %d, prime step = %d, lambda = %.7f"
+                               thread-name (first slices) slice-count  h-size step lambda))
           (loop [iter (long 0)]
             (if (< iter iterations)
               (let [continue?
