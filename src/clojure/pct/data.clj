@@ -282,8 +282,9 @@
                    sum (double 0.0)]
               (if (< i n)
                 (recur (+ i 1) (+ sum ^double (aget ^doubles x ^int (aget path i))))
-                (* ^double lambda (/ (- (/ energy chord-len) sum)
-                                     n))))]
+                (* ^double lambda
+                   ^double (/ (- (/ energy chord-len) sum)
+                              n))))]
       (loop [k (long 0)]
         (if (< k n)
           (let [i  ^int    (aget path k)
@@ -296,9 +297,10 @@
 
   (proj_art-6* [this x lambda]
     (let [n ^int (alength path)
-          a (* ^double lambda (/ (- (/ energy chord-len)
-                                    (reduce + 0.0 (fmap #(aget ^doubles x %) path)))
-                                 n))]
+          a (* ^double lambda
+               ^double (/ (- (/ energy chord-len)
+                             ^double (reduce + 0.0 (fmap #(aget ^doubles x %) path)))
+                          n))]
       (loop [k (long 0)]
         (if (< k n)
           (let [i  ^int    (aget path k)

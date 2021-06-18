@@ -177,7 +177,7 @@
 
 
 (defn- prime-seq4
-  [^long n] ;; looking for prime number within [2, n]
+  ^ArrayList [^long n] ;; looking for prime number within [2, n]
   (let [len    (int (+ (/ n 2.0) 0.5))
         mark   (byte-array len)
         sqrt_n (int (/ (Math/sqrt n) 2))]
@@ -234,7 +234,7 @@
       :else -1)))
 
 
-(def prime-seq prime-seq3)
+(def prime-seq prime-seq4)
 
 (defn prime?
   ([^long n]

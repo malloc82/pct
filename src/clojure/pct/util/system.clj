@@ -14,12 +14,12 @@
 (defonce ^:private ^HardwareAbstractionLayer hw (.getHardware (SystemInfo.)))
 (defonce ^:private ^CentralProcessor cpu (.getProcessor hw))
 
-(defonce PhysicalCores (.getPhysicalProcessorCount cpu))
-(defonce LogicalCores  (.getLogicalProcessorCount  cpu))
-(defonce MaxHeapSize   (.maxMemory (Runtime/getRuntime)))
-(defonce MaxMemory     (-> hw .getMemory .getTotal))
+(defonce ^{:tag 'int}  PhysicalCores (.getPhysicalProcessorCount cpu))
+(defonce ^{:tag 'int}  LogicalCores  (.getLogicalProcessorCount  cpu))
+(defonce ^{:tag 'long} MaxHeapSize   (.maxMemory (Runtime/getRuntime)))
+(defonce ^{:tag 'long} MaxMemory     (-> hw .getMemory .getTotal))
 
-(defonce ^:private log-chan (clojure.core.async/chan pct.util.system/LogicalCores))
+(defonce ^:private log-chan (clojure.core.async/chan (+ pct.util.system/LogicalCores 1024)))
 
 (taoensso.timbre/merge-config! {:timestamp-opts {:pattern "yyyy-MM-dd @ HH:mm:ss Z"
                                                  :locale  :jvm-default

@@ -3,7 +3,7 @@
   (:require pct.data pct.async.node
             [clojure.core.async :as a]
             [clojure.spec.alpha :as spec]
-            [pct.common :refer [with-out-str-data-map prime]]
+            [pct.common :refer [with-out-str-data-map prime prime-seq]]
             [taoensso.timbre :as timbre]
             [uncomplicate.neanderthal
              [core :refer :all]
@@ -141,6 +141,18 @@
           (recur (unchecked-inc i) (+ x (v (rand-int n))))
           x))))])
 
+(defn find-prime-step ^long [^long n]
+  (let [s (long (if (< n 300)
+                  (Math/round (* 0.618 n))
+                  (Math/round (* 0.618 (double (/ n 12))))))
+        plist ^ArrayList (prime-seq s)]
+    (loop [i (unchecked-dec (.size plist))]
+      (if (= i 0)
+        1
+        (let [p (long (.get plist i))]
+          (if (= (rem n p) 0)
+            (recur (unchecked-dec i))
+            p))))))
 
 (defn block-recon [^pct.async.node.AsyncNode node ^pct.data.HistoryIndex global-index ^RealBlockVector init-x
                    opts]
@@ -155,16 +167,17 @@
               data-len (* slice-offset slice-count)
               thread-name (format ">>>   Head [%15s]" key)
               [^ArrayList histories _]  (global-index (first slices) slice-count)
-              h-size        ^int     (.size histories)
+              h-size  ^long (long (.size histories))
+              step    ^long (find-prime-step h-size)
+              _ (timbre/info (format "%s: prime step = %d" thread-name step))
               shuffled-data (let [arr (object-array h-size)]
-                              (if (< 0 h-size)
-                                (let [step (long (prime (Math/round (* 0.618 (double (/ h-size 12))))))]
-                                  (Collections/sort histories)
-                                  (loop [j (long 0), i step]
-                                    (if (= i 0)
-                                      (aset arr j (.get histories 0))
-                                      (do (aset arr j (.get histories i))
-                                          (recur (unchecked-inc j) (long (mod (+ i step) h-size))))))))
+                              (when (< 0 h-size)
+                                (Collections/sort histories)
+                                (loop [j (long 0), i step]
+                                  (if (= i 0)
+                                    (aset arr j (.get histories 0))
+                                    (do (aset arr j (.get histories i))
+                                        (recur (unchecked-inc j) (long (mod (+ i step) h-size)))))))
                               arr)
               iterations (long (or (:iterations opts) default-iterations))
               lambda (-> opts :lambda (get slice-count))
@@ -172,8 +185,6 @@
                                  (double-array data-len))]
           (timbre/info (format "%s: start: block [%d %d] %s, lambda = %.7f"
                                thread-name (first slices) slice-count [(* offset-x slice-offset) slice-offset] lambda))
-          ;; iter 0
-
           (loop [iter (long 0)]
             (if (< iter iterations)
               (do (dotimes [i h-size]
@@ -208,16 +219,17 @@
         (let [data-len    (* slice-offset slice-count)
               thread-name (format "--> Thread [%15s]" key)
               [^ArrayList histories _]  (global-index (first slices) slice-count)
-              h-size        ^int     (.size histories)
+              h-size  ^long   (long (.size histories))
+              step    ^long   (find-prime-step h-size)
+              _ (timbre/info (format "%s: prime step = %d" thread-name step))
               shuffled-data (let [arr (object-array h-size)]
-                              (if (< 0 h-size)
-                                (let [step (long (prime (Math/round (* 0.618 (double (/ h-size 12))))))]
-                                  (Collections/sort histories)
-                                  (loop [j (long 0), i step]
-                                    (if (= i 0)
-                                      (aset arr j (.get histories 0))
-                                      (do (aset arr j (.get histories i))
-                                          (recur (unchecked-inc j) (long (mod (+ i step) h-size))))))))
+                              (when (< 0 h-size)
+                                (Collections/sort histories)
+                                (loop [j (long 0), i step]
+                                  (if (= i 0)
+                                    (aset arr j (.get histories 0))
+                                    (do (aset arr j (.get histories i))
+                                        (recur (unchecked-inc j) (long (mod (+ i step) h-size)))))))
                               arr)
               iterations (long (or (:iterations opts) default-iterations))
               lambda     (-> opts :lambda (get slice-count))
