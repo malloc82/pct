@@ -3,6 +3,7 @@
   (:require pct.data pct.async.node
             [clojure.core.async :as a]
             [clojure.spec.alpha :as spec]
+            [clojure.set :as set]
             [pct.common :refer [with-out-str-data-map]]
             [pct.util.prime :as prime]
             [taoensso.timbre :as timbre]
@@ -317,7 +318,7 @@
           (if (= n 2)
             (let [[^doubles arr [^long global-offset ^long len _]] msg
                   v (subvector final-x (* global-offset slice-offset) slice-offset)]
-              (println [k global-offset len slice-offset])
+              #_(println [k global-offset len slice-offset])
               (transfer! arr v)
               (recur))
             (do (println (format "Message format is wrong, expect n=2, got n=%d. Skip." n))
@@ -334,22 +335,23 @@
   (let [res-ch  (pct.async.node/collect-data grid)
         slice-offset (long (pct.data/slice-size* global-index))]
     (loop [acc (transient {})]
-      (if-let [[k msg] (a/<!! res-ch)]
+      (if-let [[^clojure.lang.Keyword k msg] (a/<!! res-ch)]
         (let [n (count msg)]
           (cond
             (= n 2)
             (let [[^doubles arr [^long global-offset ^long len ^long local-offset]] msg
-                  final-x ^RealBlockVector (or (get acc :final) (zero init-x))
+                  [^RealBlockVector final-x slices] (or (get acc :final) [(zero init-x) (sorted-set)])
                   v (subvector final-x (* global-offset slice-offset) slice-offset)]
               (transfer! arr v)
-              (recur (assoc! acc :final final-x)))
+              #_(println slices (-> grid k :slices) (set/union slices (-> grid k :slices)))
+              (recur (assoc! acc :final [final-x (set/union slices (-> grid k :slices))])))
 
             (= n 3)
             (let [[^long iter ^doubles arr [^long global-offset ^long len ^long local-offset]] msg
-                  x ^RealBlockVector (or (get acc iter) (zero init-x))
+                  [^RealBlockVector x slices] (or (get acc iter) [(zero init-x) (sorted-set)])
                   v (subvector x (* global-offset slice-offset) slice-offset)]
               (transfer! arr v)
-              (recur (assoc! acc iter x)))
+              (recur (assoc! acc iter [x (set/union slices (-> grid k :slices))])))
 
             :else
             (recur acc)))

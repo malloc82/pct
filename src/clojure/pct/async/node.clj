@@ -274,6 +274,10 @@
         3 (.invoke this a b c)
         (throw (Exception. (format "AsyncGrid.applyTo: invalid arglist, expected 1, 2 or 3, got %d." n))))))
 
+  clojure.lang.ILookup
+  (valAt [this k]           (get lut k nil) #_(.valAt this k nil))
+  (valAt [this k not-found] (get lut k not-found))
+
   clojure.lang.IKeywordLookup
   (getLookupThunk [this k]
     (reify clojure.lang.ILookupThunk
