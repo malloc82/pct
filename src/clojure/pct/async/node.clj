@@ -446,16 +446,18 @@
         (recur (next s)))))
 
   (collect-data [this] ;; collection data from head nodes
-    (a/go
-      (loop [remaining (into #{} (mapv :ch-log head-nodes))
-             acc (transient {})]
-        ;; (timbre/info (format "collect-data: remaining %s" remaining))
-        (if (empty? remaining)
-          (persistent! acc)
-          (let [[[k data] ch] (a/alts! (vec remaining))]
-            (if k
-              (recur (disj remaining ch) (assoc! acc k data))
-              (recur (disj remaining ch) acc)))))))
+    (let [res-ch (a/chan (count head-nodes))]
+      (a/go
+        (loop [remaining (into #{} (mapv :ch-log head-nodes))]
+          ;; (timbre/info (format "collect-data: remaining %s" remaining))
+          (if (empty? remaining)
+            (a/close! res-ch)
+            (let [[[k, :as data] ch] (a/alts! (vec remaining))]
+              (if (or (nil? k) (= k :end))
+                (recur (disj remaining ch))
+                (do (a/>! res-ch data)
+                    (recur remaining)))))))
+      res-ch))
 
   (collect-data [this cond-fn]
     (a/go
