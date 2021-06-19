@@ -281,18 +281,20 @@
           a (loop [i (long 0)
                    sum (double 0.0)]
               (if (< i n)
-                (recur (+ i 1) (+ sum ^double (aget ^doubles x ^int (aget path i))))
+                (recur (unchecked-inc i)
+                       (+ sum ^double (aget ^doubles x ^int (aget path i))))
                 (* ^double lambda
-                   ^double (/ (- (/ energy chord-len) sum)
-                              n))))]
+                   #_^double (/ (- energy (* sum chord-len)) (* n chord-len))
+                   ^double (/ (- (/ energy chord-len) sum) n))))]
       (loop [k (long 0)]
         (if (< k n)
           (let [i  ^int    (aget path k)
                 xi ^double (aget ^doubles x i)
                 next-k (unchecked-inc k)]
             (if (= xi 0.0)
-              (aset ^doubles x i (+ xi ^double a)))
-            (recur next-k))
+              (recur next-k)
+              (do (aset ^doubles x i (+ xi ^double a))
+                  (recur next-k))))
           x))))
 
   (proj_art-6* [this x lambda]
