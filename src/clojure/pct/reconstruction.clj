@@ -1,6 +1,7 @@
 (ns pct.reconstruction
   (:use clojure.core)
   (:require pct.data pct.async.node
+            pct.tvs
             [clojure.core.async :as a]
             [clojure.spec.alpha :as spec]
             [clojure.set :as set]
@@ -197,24 +198,34 @@
                               arr)
               iterations (long (or (:iterations opts) default-iterations))
               lambda (-> opts :lambda (get slice-count))
+              tvs?   (:tvs? opts)
+              rows   (.rows global-index)
+              cols   (.cols global-index)
+              alpha  (double (or (:alpha opts) 0.75))
+              tvs-N  (long (or (:tvs-N opts) 5))
               local-x ^doubles (transfer! (subvector init-x (* offset-x slice-offset) data-len)
                                           (double-array data-len))
               dump (-> opts :dump)]
-          (timbre/info (format "%s%s: start: block [%2d %2d], h-size=%-7d, step=%-5d, lambda=%s, [%6d, %5d]"
+          (timbre/info (format "%s%s: start: block [%2d %2d], h-size=%-7d, step=%-5d, lambda=%s, [%6d, %5d], tvs=%s"
                                _normal_ thread-name (first slices) slice-count h-size step (. float-format format lambda)
-                               (* offset-x slice-offset) slice-offset))
-          (loop [iter (long 0)]
+                               (* offset-x slice-offset) slice-offset
+                               (if tvs? "on" "off")))
+          (loop [iter (long 0)
+                 ell  (long 0)]
             (if (< iter iterations)
-              (do (dotimes [i h-size]
+              (let [local-x ^doubles (if tvs?
+                                       (pct.tvs/ntvs-slice local-x [rows cols] ell :alpha alpha :N tvs-N :in-place true)
+                                       local-x)]
+                  (dotimes [i h-size]
                     (pct.data/proj_art-5* ^pct.data.PathData (aget ^objects shuffled-data i) local-x lambda))
                   #_(a/>!! out [key local-x])
-                  (a/>!! out [key (Arrays/copyOf local-x data-len)])
+                  (a/>!! out [key (Arrays/copyOf ^doubles local-x data-len)])
                   (timbre/info (format "%s%s, (%d) : data sent." _normal_ thread-name iter))
                   (let [continue?
                         (loop [remaining (into #{} (keys offset-lut))]
                           (if (empty? remaining)
                             (do (if dump
-                                  (let [_copy_ (Arrays/copyOf local-x data-len)]
+                                  (let [_copy_ (Arrays/copyOf ^doubles local-x data-len)]
                                     (a/put! res [key [(unchecked-inc iter) _copy_ (:global-offset node)]])))
                                 true)
                             (if-let [[^clojure.lang.Keyword k ^doubles v] (a/<!! in)]
@@ -231,11 +242,15 @@
                                                        _term_ thread-name iter))
                                   nil))))]
                     (if continue?
-                      (recur (unchecked-inc iter))
+                      (recur (unchecked-inc iter)
+                             (+ (long (min ell iter)) (long (rand-int (Math/abs (- ell iter))))))
                       (do (timbre/info (format "%s%s, (%d) : stopped, recon incomplete." _term_ thread-name iter))))))
-              (do (timbre/info (format "%s%s, (%d) : done. Sending out local-x" _term_ thread-name iter))
-                  (a/>!! res [key [local-x (:global-offset node)]])
-                  (a/>!! res [:end]))))))
+              (let [local-x ^doubles (if tvs?
+                                       (pct.tvs/ntvs-slice local-x [rows cols] ell :alpha alpha :N tvs-N :in-place true)
+                                       local-x)]
+                (timbre/info (format "%s%s, (%d) : done. Sending out local-x" _term_ thread-name iter))
+                (a/>!! res [key [local-x (:global-offset node)]])
+                (a/>!! res [:end]))))))
 
       (= type :body)
       (a/thread
@@ -366,6 +381,10 @@
         local-x  ^doubles (Arrays/copyOf init-x data-len)
         h-size   ^int (.size histories)
         step     ^long (find-prime-step h-size)
+        tvs?     (:tvs? opts)
+        alpha    (double (or (:alpha opts) 0.75)) ;; from Blake's paper 0.75 or 0.05
+        tvs-N    (long   (or (:tvs-N opts) 5))
+        [^long rows ^long cols] (:dim opts)
         shuffled-data (let [arr (object-array h-size)]
                               (when (< 0 h-size)
                                 (Collections/sort histories)
@@ -378,11 +397,18 @@
         iterations (long (or (:iterations opts) (long 3)))
         lambda     (double (or (:lambda opts) 0.001))]
     (loop [iter (long 0)
+           ell  (long 0)
            acc (transient {})]
       (if (< iter iterations)
-        (do (dotimes [i h-size]
-              (pct.data/proj_art-5* ^pct.data.PathData (aget ^objects shuffled-data i) local-x lambda))
-            (let [next-iter (unchecked-inc iter)]
-              (recur next-iter
-                     (assoc! acc next-iter (Arrays/copyOf local-x data-len)))))
-        (persistent! (assoc! acc :final local-x))))))
+        (let [local-x (if tvs?
+                        (pct.tvs/ntvs-slice local-x [rows cols] ell :alpha alpha :N tvs-N :in-place true)
+                        local-x)]
+          (dotimes [i h-size]
+            (pct.data/proj_art-5* ^pct.data.PathData (aget ^objects shuffled-data i) local-x lambda))
+          (let [next-iter (unchecked-inc iter)
+                next-ell (+ (long (min ell iter)) (long (rand-int (Math/abs (- ell iter)))))]
+            (recur next-iter next-ell
+                   (assoc! acc next-iter (Arrays/copyOf ^doubles local-x data-len)))))
+        (persistent! (assoc! acc :final (if tvs?
+                                          (pct.tvs/ntvs-slice local-x [rows cols] ell :alpha alpha :N tvs-N :in-place true)
+                                          local-x)))))))
