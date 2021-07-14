@@ -177,7 +177,7 @@
             (recur (unchecked-dec i))
             p))))))
 
-(def ^{:private true :tag 'ints} _primes_ (int-array (prime-seq4 2000000)))
+(def ^{:private true :tag 'ints} _primes_ (int-array (prime-seq4 10000000)))
 
 (defn seed-primes [^long n]
   (def ^ints _primes_ (int-array (prime-seq4 n))))

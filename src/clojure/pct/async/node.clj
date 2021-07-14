@@ -116,7 +116,7 @@
                       ^TreeSet unused
                       ^NodeConnection upstream ^NodeConnection downstream
                       ^HashMap local-offsets ^clojure.lang.PersistentVector global-offset
-                      Properties]
+                      properties]
   clojure.lang.IFn
   (invoke [this] (count slices))
   (invoke [this k] (k this))
@@ -189,11 +189,11 @@
   ;;   (f this))
 
   INodeInfo
-  (setProperty [this k v]    (swap! Properties assoc k v))
-  (updateProperty [this k f] (swap! Properties update k f))
-  (getProperty [this k]    (get @Properties k))
-  (getProperties [this]    @Properties)
-  (clearProperties! [this] (reset! Properties {})))
+  (setProperty [this k v]    (swap! properties assoc k v))
+  (updateProperty [this k f] (swap! properties update k f))
+  (getProperty [this k]    (get @properties k))
+  (getProperties [this]    @properties)
+  (clearProperties! [this] (reset! properties {})))
 
 
 (defn newAsyncNode
@@ -299,10 +299,11 @@
     (let [tiered-nodes (apply concat grid)]
       (loop [todo      (next  tiered-nodes)
              visited   (list (first tiered-nodes))]
-        (if todo
-          (if-let [curr-tier (first todo)]
+        (let [curr-tier (first todo)]
+          (if (and todo (not (empty? curr-tier)))
             (let [curr-it   ^Iterator (clojure.lang.RT/iter curr-tier)
                   parent-it ^Iterator (clojure.lang.RT/iter (first visited))]
+              ;; (tap> ["loop:" todo curr-tier (:key (first curr-tier)) (:key (first (first visited)))])
               (loop [state :head
                      curr-node   ^AsyncNode (.next curr-it)
                      parent-node ^AsyncNode (.next parent-it)]
@@ -314,12 +315,17 @@
                       (recur :body (.next curr-it) parent-node))
                     (if (connect-upstream curr-node parent-node)
                       (do
-                        (when-let [hist (next visited)]
-                          (loop [p (first (first hist))
-                                 q (next hist)]
-                            (if (connect-upstream curr-node p)
-                              (if q
-                                (recur (first (first q)) (next q))))))
+                        #_(when-let [hist (next visited)]
+                            (loop [p (first (first hist))
+                                   q (next hist)]
+                              (if (connect-upstream curr-node p)
+                                (if q
+                                  (recur (first (first q)) (next q))))))
+                        (loop [hist (next visited)]
+                          (if hist
+                            (let [p ((first hist) 0)]
+                              (if (connect-upstream curr-node p)
+                                (recur (next hist))))))
                         (if (upstream-full? curr-node)
                           (if (.hasNext curr-it)
                             (recur :body (.next curr-it) parent-node))
@@ -332,65 +338,98 @@
                         (throw (Exception. "In setupConnection: :head, curr and parent node don't match")))))
 
                   :body
-                  (if (upstream-full? curr-node)
-                    (if (.hasNext curr-it)
-                      (recur :body (.next curr-it) parent-node))
-                    (if (connect-upstream curr-node parent-node)
-                      (if (upstream-full? curr-node)
+                  #_(if (upstream-full? curr-node)
+                      (if (.hasNext curr-it)
+                        (recur :body (.next curr-it) parent-node))
+                      (if (connect-upstream curr-node parent-node)
+                        (if (upstream-full? curr-node)
+                          (if (.hasNext curr-it)
+                            (recur :body (.next curr-it) parent-node))
+                          (if (.hasNext parent-it)
+                            (recur :body curr-node (.next parent-it))
+                            (recur :tail-patch curr-node parent-node)))
+                        (if (downstream-full? parent-node)
+                          (if (.hasNext parent-it)
+                            (recur :body curr-node (.next parent-it))
+                            (recur :tail-patch curr-node parent-node))
+                          (throw (Exception. "In setupConnection: both curr-node and parent-node not full and cannot connect.")))))
+                  (do (connect-upstream curr-node parent-node)
+                      (cond
+                        (upstream-full? curr-node)
                         (if (.hasNext curr-it)
                           (recur :body (.next curr-it) parent-node))
-                        (if (.hasNext parent-it)
-                          (recur :body curr-node (.next parent-it))
-                          (recur :tail-patch curr-node parent-node)))
-                      (if (downstream-full? parent-node)
+
+                        (downstream-full? parent-node)
                         (if (.hasNext parent-it)
                           (recur :body curr-node (.next parent-it))
                           (recur :tail-patch curr-node parent-node))
-                        (throw (Exception. "In setupConnection: both curr-node and parent-node not full and cannot connect.")))))
+
+                        :else
+                        (do
+                          (tap> curr-node)
+                          (tap> parent-node)
+                          (throw (Exception. "In setupConnection: :body, neither curr and parent node are full after connection attempt.")))))
 
                   :tail-patch
-                  (let [hist (next visited)]
-                    (loop [p (let [x (first hist)
-                                   n (dec (count x))]
-                               (x n))
-                           q (next hist)]
-                      (if (connect-upstream curr-node p)
+                  (loop [hist (next visited)]
+                    (if hist
+                      (let [x (first hist)
+                            p (x (dec (count x)))]
+                        (connect-upstream curr-node p)
                         (if-not (upstream-full? curr-node)
+                          (recur (next hist))))))
+                  #_(let [hist (next visited)]
+                      (loop [p (let [x (first hist)
+                                     n (dec (count x))]
+                                 (x n))
+                             q (next hist)]
+                        (if (connect-upstream curr-node p)
+                          (if-not (upstream-full? curr-node)
+                            (if q
+                              (let [x (first q)
+                                    n (dec (count x))]
+                                (recur (x n) (next q)))))
                           (if q
                             (let [x (first q)
                                   n (dec (count x))]
-                              (recur (x n) (next q)))))
-                        (if q
-                          (let [x (first q)
-                                n (dec (count x))]
-                            (recur (x n) (next q))))
-                        ;; (do (throw (Exception. "In setupConnection: :tail-patch, ???")))
-                        )
-                      ;; (throw (Exception. "Premature finish"))
-                      ))))
-              (recur (next todo) (conj visited curr-tier))))
+                              (recur (x n) (next q))))
+                          ;; (do (throw (Exception. "In setupConnection: :tail-patch, ???")))
+                          )
+                        ;; (throw (Exception. "Premature finish"))
+                        ))))
+              (recur (next todo) (conj visited curr-tier)))
 
-          ;; wrapping around
-          (let []
-            ;; (tap> (transform [ALL ALL] (fn [x] {(:slices x) (:unused x)}) visited))
-            (loop [hist visited
-                   idle-slices slice-count]
-              (if-let [block (first hist)]
-                (when (> idle-slices 0)
-                  (let [n (int (loop [nodes block
-                                      n 0]
-                                 (if-let [x (first nodes)]
-                                   (let [unused (:unused x)]
-                                     (if (empty? unused)
-                                       (recur (next nodes) n)
-                                       (let [n (+ n (count unused))]
-                                         (doseq [i unused]
-                                           (let [k (keyword (str i))
-                                                 d (k lut-heads)]
-                                             (connect-upstream d x)))
-                                         (recur (next nodes) n))))
-                                   n)))]
-                    (recur (next hist) (- idle-slices n)))))))))))
+            ;; wrapping around
+            (let []
+              ;; (tap> (transform [ALL ALL] (fn [x] {(:slices x) (:unused x)}) visited))
+              (loop [hist visited
+                     idle-slices (count head-nodes) ;; slice-count
+                     ]
+                (if-let [block (first hist)]
+                  (when (> idle-slices 0)
+                    (let [n (int (loop [nodes block, n 0]
+                                   (if-let [x (first nodes)]
+                                     (let [#_#_unused (:unused x)
+                                           it (clojure.lang.RT/iter (vec (:unused x)))]
+                                       (if (.hasNext it) #_(empty? unused)
+                                           (recur (next nodes)
+                                                  (long (loop [n (long n)]
+                                                          (if (.hasNext it)
+                                                            (let [k (keyword (str (.next it))),
+                                                                  d (k lut-heads)]
+                                                              (if (connect-upstream d x)
+                                                                (recur (unchecked-inc n))
+                                                                (recur n)))
+                                                            n))))
+                                           (recur (next nodes) n)
+                                           #_(let [n (+ n (count unused))]
+                                               (doseq [i unused]
+                                                 (let [k (keyword (str i))
+                                                       d (k lut-heads)]
+                                                   (connect-upstream d x)))
+                                               (recur (next nodes) n))))
+                                     n)))]
+                      (recur (next hist) (- idle-slices n))))))))))))
 
   (compute-offsets [this]
     (doseq [[_ node] lut]
@@ -548,7 +587,8 @@
                                                     (doseq [i (:slices node)]
                                                       (.put head-map (keyword (str i)) node))
                                                     (.put head-map (:key node) node)))
-                                                node)))))))
+                                                node)))))
+                          (filterv #(not (empty? %)))))
          blocks (mapv #(block-gen %) block-sizes)
          grid   (AsyncGrid. (int slice-count)
                             (vec sorted-block-sizes)
