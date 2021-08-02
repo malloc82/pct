@@ -8,13 +8,17 @@
             [clojure.java.io :as io]
             [clojure.string  :as s]
             [clojure.core.async :as a :refer [>! <! >!! <!! chan]]
+            ;; [clojure.data.json :as json]
+            [cheshire.core :refer :all]
             [taoensso.timbre :as timbre]
             [uncomplicate.neanderthal
              [core   :refer :all]
              [native :refer :all]])
   (:import [java.nio ByteOrder ByteBuffer IntBuffer]
            [java.io FileOutputStream BufferedOutputStream BufferedInputStream RandomAccessFile File]
-           [java.util HashMap ArrayList Scanner]
+           [java.util HashMap ArrayList Scanner Arrays]
+           [java.awt.image BufferedImage Raster WritableRaster]
+           [javax.imageio ImageIO]
            [uncomplicate.neanderthal.internal.host.buffer_block IntegerBlockVector RealBlockVector]))
 
 
@@ -312,7 +316,7 @@
 
 (defn load-series2
   "Use java array, not yet finished"
-  [prefix & {:keys [rows cols slices ext iter] :or {rows 200 cols 200 slices 16 ext "txt" iter 0}}]
+  ^doubles [prefix & {:keys [rows cols slices ext iter] :or {rows 200 cols 200 slices 16 ext "txt" iter 0}}]
   ;;Verify files
   (dotimes [i slices]
     (let [fname (format "%s_%d_%d.%s" prefix iter i ext)]
@@ -349,10 +353,10 @@
 
 (defn save-x2
   "Use java array, not yet finished."
-  [x fname & {:keys [rows cols] :or {rows 200 cols 200}}]
+  [x fname & {:keys [rows cols]}]
+  {:pre [(int? rows) (int? cols) (= (dim x) (* (long rows) (long cols)))]}
   (let [file ^File (java.io.File. ^String fname)
         z ^float (float 0)]
-    (assert (= (dim x) (* (long rows) (long cols))))
     (when-let [d ^File (.getParentFile file)]
       (.mkdirs d))
     (let [fmt ^java.text.DecimalFormat (java.text.DecimalFormat. "0.#######")]
@@ -362,6 +366,61 @@
             (.write w (format "%s \n" (clojure.string/join " " line)))
             (recur rst)))))))
 
+(defn save-img
+  "Save a slice as a png image"
+  [^doubles x [^long rows ^long cols] & {:keys [file-prefix iter slice-idx copy?]
+                                         :or {file-prefix "x"
+                                              iter (long 0)
+                                              slice-idx (long 0)
+                                              copy? true}}]
+  {:pre [(= (alength x) (* rows cols))]}
+  (let [image ^BufferedImage (BufferedImage. cols rows BufferedImage/TYPE_BYTE_GRAY)
+        len ^int (alength x)
+        data ^doubles (if copy? (Arrays/copyOf x len) x)
+        [^double _min ^double _max] (pct.common/min-max-doubles data)
+        _r ^double (- _max _min)]
+    (when-not (= _r 0.0)
+      (dotimes [i len]
+        (aset data i (double (Math/round (* (/ (- (aget data i) _min) _r) 255))))))
+    (.setPixels ^WritableRaster (.getRaster image) 0 0 cols rows data)
+    (ImageIO/write image "png" (clojure.java.io/file (format "%s_%s_%s.png" file-prefix iter slice-idx)))))
+
+(defn save-series-img
+  "Save series as png files, and write reconstruction optinos as json to a file in the folder"
+  [^doubles x [^long rows ^long cols ^long slices] folder recon-opts])
+
+(comment
+  ;; read config
+  (json/read-str (slurp "test_confi.txt") :key-fn #(if (re-matches #"\d+" %)
+                                                     (java.lang.Long/parseLong %)
+                                                     (keyword %)))
+  (parse-string (slurp "test_config.txt") (fn [k] (if (re-matches #"\d+" k)
+                                                   (java.lang.Long/parseLong k)
+                                                   (keyword k))))
+  ;; write config
+  (with-open [f (clojure.java.io/writer "test_config.txt")]
+    (.write f (generate-string {:tvs? true
+                                :iterations 6
+                                :lambda {1 0.00001
+                                         2 0.00001
+                                         3 0.00001
+                                         4 0.00001
+                                         5 0.00001}}
+                       {:pretty true
+                        :key-fn (fn [k] (if (keyword? k)
+                                         (name k)
+                                         (str k)))}))))
+
+(defn save-series-txt [^doubles x & {:keys [rows cols range]}]
+  {:pre [(int? rows) (int? cols)]}
+  (let [slice-offset (long (* ^int rows ^int cols))
+        [^long _s ^long _e] range
+        last-idx (unchecked-dec (long (/ (alength x) slice-offset)))
+        start    (int (or _s 0))
+        end      (int (min (long (or _e last-idx)) last-idx))]
+    (loop [slice-idx start])))
+
+(defn save-series-png [])
 
 (defn save-series [x prefix & {:keys [rows cols ext binary filename]
                                :or   {rows 200 cols 200 ext "txt" binary false}}]
@@ -394,7 +453,7 @@
             (.write os (.array cols-buff))
             (.write os (.array slices-buff))
             (let [buf ^DoubleBuffer (-> (.order dbuff ByteOrder/LITTLE_ENDIAN)
-                                         .asDoubleBuffer)]
+                                        .asDoubleBuffer)]
               (loop [i (long 0)]
                 (if (< i len)
                   (do (.put buf i (x i))
@@ -406,6 +465,28 @@
         (when (< offset len)
           (save-x (subvector x offset length) prefix :id i :rows rows :cols cols :ext ext)
           (recur (unchecked-add-int offset length) (unchecked-inc-int i)))))))
+
+(defn createResultFolder ^java.lang.String []
+  (loop [folder ^java.io.File (java.io.File. (format "results/%s" (pct.util.system/get-timestamp)))]
+    (if (.exists folder)
+      (recur (java.io.File. (format "results/%s" (pct.util.system/get-timestamp))))
+      (do (.mkdirs folder)
+          (.toString folder)))))
+
+(defn load-config [^String path]
+  (parse-string (slurp path) (fn [k] (if (re-matches #"\d+" k)
+                                      (java.lang.Long/parseLong k)
+                                      (keyword k)))))
+
+(defn save-series2 [x config]
+  (let [folder (createResultFolder)
+        iter (or (:iterations config) 0)
+        {:keys [rows cols slices]} config]
+    (assert (or (nil? rows) (nil? cols) (nil? slices)))
+    (with-open [f (clojure.java.io/writer (format "%s/config.txt" folder))]
+      (.write f (generate-string config {:pretty true
+                                         :key-fn (fn [k] (if (keyword? k) (name k) (str k)))}))
+      )))
 
 
 (defn load-data-sample [f]
@@ -434,7 +515,8 @@
 
 (deftype PCTDataset [^long rows ^long cols ^long slices ^java.lang.String path-file ^java.lang.String b-file
                      ^HashMap samples
-                     ^RealBlockVector x0 ^pct.data.HistoryInputStream in-stream]
+                     ^RealBlockVector x0 ^pct.data.HistoryInputStream in-stream
+                     format]
   IPCTDataset
   (size  [_]  [rows cols slices])
   (files [_] {:path-file  path-file
@@ -452,9 +534,9 @@
 (defn test-dataset [^PCTDataset dataset]
   (pct.data/count-test (.in-stream dataset) (.samples dataset)))
 
-(defn newPCTDataset [{:keys [rows :rows cols :cols slices :slices dir :dir path :path b :b] :as input}]
+(defn newPCTDataset [{:keys [rows :rows cols :cols slices :slices dir :dir path :path b :b fmt :fmt] :as input}]
   (let [path-file (format "%s/%s" dir path)
-        b-file (format "%s/%s" dir b)]
+        b-file (when (= fmt :old) (format "%s/%s" dir b))]
     ;; (println input)
     #_(map->PCTDataset {:rows rows :cols cols :slices slices
                       :path-file path-file
@@ -465,7 +547,7 @@
     (try
       (let [samples ^HashMap (HashMap.)]
         (loop [i (long 0)]
-          (let [f ^java.io.File (java.io.File. (format "%s/path_%d.txt" dir i))]
+          (let [f ^java.io.File (clojure.java.io/file (format "%s/path_%d.txt" dir i))]
             (when (.isFile f)
               (let [[id data] (load-data-sample f)]
                 (.put samples id data)
@@ -474,7 +556,10 @@
                       samples
                       (pct.data.io/load-series (format "%s/x" dir)
                                                :rows rows :cols cols :slices slices :ext "txt" :iter 0)
-                      (pct.data/newHistoryInputStream path-file b-file)))
+                      (if b-file
+                        (pct.data/newHistoryInputStream path-file b-file)
+                        (pct.data/newHistoryInputStream path-file))
+                      fmt))
       (catch java.io.FileNotFoundException ex
         (timbre/error ex "File is not found." (.getName (Thread/currentThread)))
         (throw ex)))))

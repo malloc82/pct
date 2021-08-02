@@ -170,7 +170,7 @@
   #_(getVoxelCount* [this i] [this i j]))
 
 
-(deftype PathData [^int id ^ints path ^double chord-len ^float energy
+(deftype PathData [^int id ^ints path ^double chord-len ^float wepl
                    ^float entry-xy ^float entry-xz ^float exit-xy ^float exit-xz
                    ^HashMap properties]
 
@@ -215,11 +215,11 @@
           sum))))
 
   (residue* [this x]
-    (- ^double (dot* this x) (/ (double energy) chord-len)))
+    (- ^double (dot* this x) (/ (double wepl) chord-len)))
 
   (proj_art-1* [this x lambda]
     (let [n ^int (alength path)
-          a ^double (* ^double lambda (/ (- energy (* ^double (dot* this x) chord-len))
+          a ^double (* ^double lambda (/ (- wepl (* ^double (dot* this x) chord-len))
                                          (* n chord-len)))]
       (loop [k (int 0)]
         (if (< k n)
@@ -232,7 +232,7 @@
 
   (proj_art-2* [this x lambda]
     (let [n ^int (alength path)
-          a ^double (* ^double lambda (/ (- (/ energy chord-len) ^double (dot* this x))
+          a ^double (* ^double lambda (/ (- (/ wepl chord-len) ^double (dot* this x))
                                          n ))]
       (loop [k (int 0)]
         (if (< k n)
@@ -246,7 +246,7 @@
   ;; second fastest
   (proj_art-3* [this x lambda]
     (let [n ^int (alength path)
-          a ^double (* ^double lambda (/ (- (/ energy chord-len) ^double (dot* this x))
+          a ^double (* ^double lambda (/ (- (/ wepl chord-len) ^double (dot* this x))
                                          n ))]
       (loop [k (long 0)]
         (if (< k n)
@@ -262,7 +262,7 @@
   ;; Using double array seems to be the fastest so far
   (proj_art-4* [this x lambda]
     (let [n ^int (alength path)
-          a ^double (* ^double lambda (/ (- (/ energy chord-len) ^double (dot-2* this x))
+          a ^double (* ^double lambda (/ (- (/ wepl chord-len) ^double (dot-2* this x))
                                          n ))]
       (loop [k (long 0)]
         (if (< k n)
@@ -284,8 +284,8 @@
                 (recur (unchecked-inc i)
                        (+ sum ^double (aget ^doubles x ^int (aget path i))))
                 (* ^double lambda
-                   #_^double (/ (- energy (* sum chord-len)) (* n chord-len))
-                   ^double (/ (- (/ energy chord-len) sum) n))))]
+                   #_^double (/ (- wepl (* sum chord-len)) (* n chord-len))
+                   ^double (/ (- (/ wepl chord-len) sum) n))))]
       (loop [k (long 0)]
         (if (< k n)
           (let [i  ^int    (aget path k)
@@ -305,8 +305,8 @@
                 (recur (unchecked-inc i)
                        (+ sum ^double (aget ^doubles x ^int (aget path i))))
                 (* ^double lambda
-                   #_^double (/ (- energy (* sum chord-len)) (* n chord-len))
-                   ^double (/ (- (/ energy chord-len) sum) n))))]
+                   #_^double (/ (- wepl (* sum chord-len)) (* n chord-len))
+                   ^double (/ (- (/ wepl chord-len) sum) n))))]
       (loop [k (long 0)]
         (if (< k n)
           (let [i  ^int    (aget path k)
@@ -320,7 +320,7 @@
 
   #_(proj_art-3* [this x lambda]
       (let [n ^int (alength path)
-            a ^double (* ^double lambda (/ (- (/ energy chord-len) ^double (dot* this x))
+            a ^double (* ^double lambda (/ (- (/ wepl chord-len) ^double (dot* this x))
                                            n ))
             f (fn ^double [^double v] (if (= v 0.0) 0.0 (+ v a)))]
         (loop [k (int 0)]
@@ -331,7 +331,7 @@
 
   #_(proj_art-4* [this x lambda]
     (let [n ^int (alength path)
-          a ^double (* ^double lambda (/ (- (/ energy chord-len) ^double (dot* this x))
+          a ^double (* ^double lambda (/ (- (/ wepl chord-len) ^double (dot* this x))
                                          n ))]
       (loop [k (int 0)]
         (if (< k n)
@@ -342,7 +342,7 @@
 
   (proj_drop* [this x lambda hit-map]
     (let [n ^int (alength path)
-          a ^double (* ^double lambda (/ (- energy ^double (dot* this x))
+          a ^double (* ^double lambda (/ (- wepl ^double (dot* this x))
                                          (* n chord-len)))]
       (loop [k (int 0)]
         (if (< k n)
@@ -355,7 +355,7 @@
 
   clojure.lang.IFn
   (invoke [this i] (aget path i))
-  (invoke [this] energy)
+  (invoke [this] wepl)
 
   clojure.lang.Counted
   (count [_] (alength path))
@@ -374,7 +374,7 @@
       (nil? o) false
       (identical? this o) true
       (instance? PathData o) (let [n ^int (.size ^PathData o)]
-                               (and (= energy (.energy ^PathData o))
+                               (and (= wepl (.wepl ^PathData o))
                                     (= chord-len (.chord-len ^PathData o))
                                     (= (alength path) n)
                                     (loop [i n]
@@ -392,12 +392,26 @@
 
 (defn PathData->fromStream
   "Read the path and b data from two seperate files provided by Paniz, each one contains everything.
-   pis : BufferedInputStream for path file
-   bis : BufferedInputstream for b file
+   pis : BufferedInputStream for MLP path file
+   bis : BufferedInputstream for WEPL file, if provided; otherwise, WEPL data is provided by MLP path file
 
    Return a PathData"
-
-  ([^long id ^java.io.BufferedInputStream pis ^java.io.BufferedInputStream bis]
+  (^PathData [^long id ^java.io.BufferedInputStream pis]
+   (when-let [[^int length ^bytes len-buf] (read-int pis true)]
+     (let [path-buf ^bytes (byte-array (* 4 length))
+           path-arr ^ints  (int-array length)]
+       (when-not (= (.read pis path-buf) -1)
+         (-> (ByteBuffer/wrap ^bytes path-buf)
+             (.order ByteOrder/LITTLE_ENDIAN)
+             .asIntBuffer
+             (.get path-arr))
+         (let [[^double chord-len   _] (read-double pis true)
+               [^float       wepl   _] (read-float  pis true)
+               [^FloatBuffer angles _] (read-floats pis 4 true)]
+           (->PathData id path-arr chord-len wepl
+                       (.get angles 0) (.get angles 1) (.get angles 2) (.get angles 3)
+                       (new HashMap)))))))
+  (^PathData [^long id ^java.io.BufferedInputStream pis ^java.io.BufferedInputStream bis]
    (when-let [[^int length ^bytes len-buf] (read-int pis true)]
      (let [path-buf ^bytes (byte-array (* 4 length))
            path-arr ^ints  (int-array length)]
@@ -408,10 +422,11 @@
              (.get path-arr))
          (let [[^double chord-len   _] (read-double pis true)
                [^FloatBuffer angles _] (read-floats pis 4 true)
-               [^float energy       _] (read-float  bis true)]
-           (->PathData id path-arr chord-len energy
+               [^float       wepl   _] (read-float  bis true)]
+           (->PathData id path-arr chord-len wepl
                        (.get angles 0) (.get angles 1) (.get angles 2) (.get angles 3)
                        (new HashMap))))))))
+
 
 (deftype HistoryInputStream [^java.io.BufferedInputStream pis ^java.io.BufferedInputStream bis ^long length
                              ^{:unsynchronized-mutable true :tag long} index
@@ -486,13 +501,17 @@
   ;;     (a/close! out-ch)))
 
   (read-PathData [this]
-    (if-let [s (PathData->fromStream index pis bis)]
+    (if-let [^PathData s (if bis
+                           (PathData->fromStream index pis bis)
+                           (PathData->fromStream index pis))]
       (do (set! index (inc index))
           s)))
 
   (read-PathData [this out-ch]
     (loop []
-      (when-let [b (PathData->fromStream index pis bis)]
+      (when-let [^PathData b (if bis
+                               (PathData->fromStream index pis bis)
+                               (PathData->fromStream index pis))]
         (set! index (inc index))
         (>!! out-ch b)
         (recur)))
@@ -504,7 +523,9 @@
       (loop [acc ^objects (object-array batch-size)
              len ^long    (long 0)
              id  ^long    (long 0)]
-        (if-let [b (PathData->fromStream id pis bis)]
+        (if-let [^PathData b (if bis
+                               (PathData->fromStream id pis bis)
+                               (PathData->fromStream id pis))]
           (if (< len batch-size)
             (do (aset acc len b)
                 (recur acc (unchecked-inc len) (unchecked-inc id)))
@@ -518,7 +539,9 @@
 
   (count-test [this]
     (loop [i ^long (long 0)]
-      (if-let [b (PathData->fromStream i pis bis)]
+      (if-let [b (if bis
+                   (PathData->fromStream i pis bis)
+                   (PathData->fromStream i pis))]
         (recur (unchecked-inc i))
         i)))
 
@@ -528,7 +551,9 @@
      (loop [i          ^long (long 0)
             test-count ^long (long 0)]
        (if (< test-count n)
-         (if-let [b ^PathData (PathData->fromStream i pis bis)]
+         (if-let [^PathData b (if bis
+                                (PathData->fromStream i pis bis)
+                                (PathData->fromStream i pis))]
            (do (if-let [arr ^ints (.get ^HashMap m i)]
                  (do (if (Arrays/equals arr ^ints (.path b))
                        (.put res i true)
@@ -817,7 +842,7 @@
                 K (count slice)]
             (loop [j 0]
               (when (< j K)
-                (print (format " [%d] " (count (.get slice j))))
+                (print (format " [%d] " (count (first (.get slice j)))))
                 (recur (unchecked-inc j)))))
           (println "")
           (recur (unchecked-inc i))))
