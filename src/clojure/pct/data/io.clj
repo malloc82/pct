@@ -692,19 +692,20 @@
        (throw (Exception. (format "Error: length (%d) > __max_intersections__ (%d)." length __max_intersections__))))
      (let [ ;; path-buf ^bytes (byte-array (* 4 length))
            path-arr ^ints  (int-array length)]
-       (when-not (= (.read MLP-stream __path_buffer__ 0 (* 4 length)) -1)
-         (-> (ByteBuffer/wrap ^bytes __path_buffer__)
-             (.order __ENDIAN__)
-             .asIntBuffer
-             (.get path-arr 0 length))
-         (let [^double chord-len (read-double MLP-stream __ENDIAN__ __double_buffer__)
-               ^float  wepl      (read-float  MLP-stream __ENDIAN__ __float_buffer__)
-               ^float  entry-xy  (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
-               ^float  entry-xz  (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
-               ^float  exit-xy   (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
-               ^float  exit-xz   (read-float  MLP-stream __ENDIAN__ __float_buffer__)]
-           (ProtonHistory. id path-arr chord-len wepl entry-xy entry-xz exit-xy exit-xz
-                           (new HashMap)))))))
+       (if (= (.read MLP-stream __path_buffer__ 0 (* 4 length)) -1)
+         (throw (java.io.IOException. "Error: Unexpected EOF when trying to read MLP data (int array)."))
+         (do (-> (ByteBuffer/wrap ^bytes __path_buffer__)
+                 (.order __ENDIAN__)
+                 .asIntBuffer
+                 (.get path-arr 0 length))
+             (let [^double chord-len (read-double MLP-stream __ENDIAN__ __double_buffer__)
+                   ^float  wepl      (read-float  MLP-stream __ENDIAN__ __float_buffer__)
+                   ^float  entry-xy  (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
+                   ^float  entry-xz  (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
+                   ^float  exit-xy   (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
+                   ^float  exit-xz   (read-float  MLP-stream __ENDIAN__ __float_buffer__)]
+               (ProtonHistory. id path-arr chord-len wepl entry-xy entry-xz exit-xy exit-xz
+                               (new HashMap))))))))
 
   (^ProtonHistory [^long id ^java.io.BufferedInputStream MLP-stream ^java.io.BufferedInputStream WEPL-stream]
    (when-let [^int length (read-int MLP-stream __ENDIAN__ __int_buffer__)]
@@ -712,19 +713,20 @@
        (throw (Exception. (format "Error: length (%d) > __max_intersections__ (%d)." length __max_intersections__))))
      (let [ ;; path-buf ^bytes (byte-array (* 4 length))
            path-arr ^ints  (int-array length)]
-       (when-not (= (.read MLP-stream __path_buffer__ 0 (* 4 length)) -1)
-         (-> (ByteBuffer/wrap ^bytes __path_buffer__)
-             (.order __ENDIAN__)
-             .asIntBuffer
-             (.get path-arr 0 length))
-         (let [^double chord-len (read-double MLP-stream __ENDIAN__ __double_buffer__)
-               ^float  entry-xy  (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
-               ^float  entry-xz  (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
-               ^float  exit-xy   (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
-               ^float  exit-xz   (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
-               ^float  wepl      (read-float WEPL-stream __ENDIAN__ __float_buffer__)]
-           (ProtonHistory. id path-arr chord-len wepl entry-xy entry-xz exit-xy exit-xz
-                           (new HashMap))))))))
+       (if (= (.read MLP-stream __path_buffer__ 0 (* 4 length)) -1)
+         (throw (java.io.IOException. "Error: Unexpected EOF when trying to read MLP data (int array)."))
+         (do (-> (ByteBuffer/wrap ^bytes __path_buffer__)
+                 (.order __ENDIAN__)
+                 .asIntBuffer
+                 (.get path-arr 0 length))
+             (let [^double chord-len (read-double MLP-stream __ENDIAN__ __double_buffer__)
+                   ^float  entry-xy  (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
+                   ^float  entry-xz  (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
+                   ^float  exit-xy   (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
+                   ^float  exit-xz   (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
+                   ^float  wepl      (read-float WEPL-stream __ENDIAN__ __float_buffer__)]
+               (ProtonHistory. id path-arr chord-len wepl entry-xy entry-xz exit-xy exit-xz
+                               (new HashMap)))))))))
 
 
 (defprotocol IPCTDataset
@@ -847,19 +849,21 @@
       (loop [acc ^objects (object-array batch-size)
              len ^long    (long 0)
              id  ^long    (long 0)]
-        (if-let [^ProtonHistory b (if WEPL-stream
-                                    (ProtonHistory->fromStream id MLP-stream WEPL-stream)
-                                    (ProtonHistory->fromStream id MLP-stream))]
-          (if (< len batch-size)
-            (do (aset acc len b)
-                (recur acc (unchecked-inc len) (unchecked-inc id)))
-            (let [new-acc ^objects (object-array batch-size)]
-              (>!! out-ch [len acc])
-              (aset new-acc 0 b)
-              (recur new-acc (long 1) (unchecked-inc id))))
-          (do (>!! out-ch [len acc]))))
-      (.close this)
-      (a/close! out-ch)))
+        (if (< id history-count)
+          (if-let [^ProtonHistory b (if WEPL-stream
+                                      (ProtonHistory->fromStream id MLP-stream WEPL-stream)
+                                      (ProtonHistory->fromStream id MLP-stream))]
+            (if (< len batch-size)
+              (do (aset acc len b)
+                  (recur acc (unchecked-inc len) (unchecked-inc id)))
+              (let [new-acc ^objects (object-array batch-size)]
+                (>!! out-ch [len acc])
+                (aset new-acc 0 b)
+                (recur new-acc (long 1) (unchecked-inc id))))
+            (do (>!! out-ch [len acc])))
+          (do (timbre/info (format "read-ProtonHistory: Expected number of histories (%d) are read." id))
+              (.close this)
+              (a/close! out-ch))))))
 
   (count-test [this]
     (loop [i ^long (long 0)]
