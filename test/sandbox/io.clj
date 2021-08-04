@@ -147,8 +147,8 @@
                                               buf-size))))))))
 
 (defn- read-test
-  [filename]
-  (with-open [is (clojure.java.io/input-stream filename)]
+  [^String filename]
+  (with-open [is (BufferedInputStream. (FileInputStream. filename) 4096) #_(clojure.java.io/input-stream filename)]
     (let [endian ByteOrder/LITTLE_ENDIAN
           buffer (byte-array (* 4 100))]
       (println (read-header is))
@@ -175,7 +175,6 @@
               b (read-double is endian __double_buffer__)
               c (read-float  is endian __float_buffer__)
               d (read-float  is endian __float_buffer__)
-              e (read-float  is endian __float_buffer__)
-              ]
+              e (read-float  is endian __float_buffer__)]
           (println (format "0x%08x" a) b c d e))))))
 

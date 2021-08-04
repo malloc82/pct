@@ -12,8 +12,7 @@
              [math :as math]]
             [uncomplicate.neanderthal.internal.host
              [mkl :as mkl]]
-            [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]]
-            [pct.io :refer [load-vctr load-series save-x save-series]]))
+            [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]]))
 
 (set! *warn-on-reflection* true)
 ;; (set! *unchecked-math* true)

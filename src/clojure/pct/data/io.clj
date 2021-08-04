@@ -204,8 +204,8 @@
              (Long/parseLong (String. header 0 i))
              (do (aset header i c)
                  (recur (unchecked-inc i)))))
-         (throw (java.io.IOException. (format "Error: Unexpected end when reading header. Header buffer might be too small (%d)."
-                                              buf-size))))))))
+         (throw (java.io.IOException. (format "Error: Unexpected end when reading header. Header buffer might be too small (%d), header = %s"
+                                              buf-size (String. header 0 i)))))))))
 
 
 
@@ -343,7 +343,7 @@
      (do (println "dataset found, dimension:" [rows cols slices-found])
          (println "requested slices: " (:slices opts))
          (let [^long slices (if-let [s (:slices opts)]
-                              (if (< (long s) slices-found)
+                              (if (<= (long s) slices-found)
                                 (long s)
                                 (throw (Exception. (format "Error: requested %d slices, but only %d available."
                                                            s slices-found))))
@@ -892,15 +892,16 @@
 
 (defn newPCTDataset
   ([^String folder ^String MLP-file]
-   (newPCTDataset MLP-file nil))
+   (newPCTDataset folder MLP-file nil))
   ([^String folder ^String MLP-file ^String WEPL-file]
    (let [[^long rows ^long cols ^long slices] (dataset-dimension folder #"x_0_\d+\.txt")]
-     (let [MLP-stream (BufferedInputStream. (FileInputStream. MLP-file))
+     (let [MLP-stream (BufferedInputStream. (FileInputStream. (format "%s/%s" folder MLP-file)) __IO_buffer_size__)
            history-count (read-header MLP-stream)
+           _ (println "history-count = " history-count)
            WEPL-stream (if WEPL-file
-                         (BufferedInputStream. (FileInputStream. WEPL-file)))]
+                         (BufferedInputStream. (FileInputStream. (format "%s/%s" folder WEPL-file)) __IO_buffer_size__))]
        (when WEPL-stream
-         (assert (= (read-header MLP-stream) history-count)))
+         (assert (= (read-header WEPL-stream) history-count)))
        (let [samples ^HashMap (HashMap.)]
          (loop [i (long 0)]
            (let [f ^java.io.File (clojure.java.io/file (format "%s/path_%d.txt" folder i))]

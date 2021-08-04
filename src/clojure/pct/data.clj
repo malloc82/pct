@@ -556,7 +556,7 @@
   clojure.lang.Counted
   (count [_] length))
 
-(defn newHistoryInputStream
+#_(defn newHistoryInputStream
   ([path-file]
    (let [pis ^java.io.BufferedInputStream (io/input-stream path-file)
          p-count ^int (read-header pis)]
