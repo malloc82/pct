@@ -1,5 +1,5 @@
 (ns pct.data
-  (:use pct.common pct.io)
+  (:use pct.common)
   (:require pct.util.system pct.async.threads
             [clojure.spec.alpha :as spec]
             [com.rpl.specter :as sp]
@@ -36,14 +36,6 @@
    (if (< i len)
      (cons (nth v i) (vseq v len (unchecked-inc i)))
      '())))
-
-
-(defn ^:private sseq [s fnext]
-  (lazy-seq
-   (let [b (fnext s)]
-     (if b
-       (cons b (sseq s fnext))
-       '()))))
 
 
 (defn ^:private aseq [a ^long len ^long i]
@@ -97,10 +89,10 @@
   (get-sliceIDs* [this] [this offset] "return the map/set"))
 
 
-(defprotocol IPathData
-  (toPathData [this] [this x] [this x spec]))
+(defprotocol IProtonHistory
+  (toProtonHistory [this] [this x] [this x spec]))
 
-(defprotocol IPathDataInfo
+(defprotocol IProtonHistoryInfo
   (slices [this slice-length] [this slice-length start-idx]))
 
 (defprotocol IPathCompute
@@ -122,63 +114,43 @@
   (set-dot!*   [this d])
   (get-dot*    [this]))
 
-(defprotocol IHistoryInput
-  (skip* [this n]   "skip n data")
-  (next* [this] [this n] [this n out-ch]
-    "read next data, if n is given will read the next n data to acc.
-     If acc could be either a container or a channel")
-  (rest* [this] [this out-ch] [this out-ch batch] "read the remaining data to out channel")
-  ;; (reset* [this]    "reset position")
-  (read-PathData [this] [this out-ch] [this out-ch batch] "read data from file as pathdata directly")
-  (length* [this] )
-  (count-test [this] [this m]))
+;; (defprotocol IHistoryInput
+;;   (skip* [this n]   "skip n data")
+;;   (next* [this] [this n] [this n out-ch]
+;;     "read next data, if n is given will read the next n data to acc.
+;;      If acc could be either a container or a channel")
+;;   (rest* [this] [this out-ch] [this out-ch batch] "read the remaining data to out channel")
+;;   ;; (reset* [this]    "reset position")
+;;   (read-ProtonHistory [this] [this out-ch] [this out-ch batch] "read data from file as ProtonHistory directly")
+;;   (length* [this] )
+;;   (count-test [this] [this m]))
 
 ;; (defprotocol IOutput
 ;;   (write* [this] [this os] "write this to os")
 ;;   (close* [this]))
 
-(defprotocol IOutput
-  (write-out* [this]))
+;; (defprotocol IOutput
+;;   (write-out* [this]))
 
 
 (defprotocol IAccumulator
   (add* [this obj]))
 
 
-(defprotocol IHistoryOutput
-  (writeHistory* [this history])
-  (writeHeader* [this header]))
+;; (defprotocol IHistoryOutput
+;;   (writeHistory* [this history])
+;;   (writeHeader* [this header]))
 
 
-(defprotocol IHistoryIndex
-  ;; (counted?* [this])
-  ;; (addHistories*   [this coll slice length])
-  ;; (removeHistories* [this i] [this i j])
-  (image-size* [this] "return the number of voxels of the full image.")
-  (slice-size* [this] "return the size of a slice")
-  (mergeIndex*   [this m])
-  (set-x0* [this x])
-  ;; (index* [this] "return a key map")
-  (summary* [this] "Print a summary for current index")
-  (trimToSize* [this]))
-
-
-(defprotocol IVoxelHistogram
-  (reset-hit-counts* [this])
-  (counted?* [this])
-  (count-voxel-hits* [this] [this forced])
-  #_(getVoxelCount* [this i] [this i j]))
-
-
-(deftype PathData [^int id ^ints path ^double chord-len ^float wepl
-                   ^float entry-xy ^float entry-xz ^float exit-xy ^float exit-xz
-                   ^HashMap properties]
+(deftype ProtonHistory [^int id ^ints path ^double chord-len ^float wepl
+                        ^float entry-xy ^float entry-xz ^float exit-xy ^float exit-xz
+                        ^HashMap properties]
 
   IHistory
   (get-sliceIDs* [this offset]
     (reduce #(conj %1 (quot ^long %2 ^long offset)) (sorted-set) path))
 
-  IPathDataInfo
+  IProtonHistoryInfo
   (slices [this slice-offset] (slices this slice-offset 0))
   (slices [this slice-offset start-idx]
     (let [len (alength path)
@@ -193,9 +165,9 @@
   (compareTo [this o]
     (cond
       ;; (identical? this o) (int 0)
-      (> entry-xy ^float (.entry-xy ^PathData o)) (int  1)
-      (< entry-xy ^float (.entry-xy ^PathData o)) (int -1)
-      (= entry-xy ^float (.entry-xy ^PathData o)) (int  0)))
+      (> entry-xy ^float (.entry-xy ^ProtonHistory o)) (int  1)
+      (< entry-xy ^float (.entry-xy ^ProtonHistory o)) (int -1)
+      (= entry-xy ^float (.entry-xy ^ProtonHistory o)) (int  0)))
 
   IPathCompute
   (dot* [this x]
@@ -373,13 +345,13 @@
     (cond
       (nil? o) false
       (identical? this o) true
-      (instance? PathData o) (let [n ^int (.size ^PathData o)]
-                               (and (= wepl (.wepl ^PathData o))
-                                    (= chord-len (.chord-len ^PathData o))
+      (instance? ProtonHistory o) (let [n ^int (.size ^ProtonHistory o)]
+                               (and (= wepl (.wepl ^ProtonHistory o))
+                                    (= chord-len (.chord-len ^ProtonHistory o))
                                     (= (alength path) n)
                                     (loop [i n]
                                       (if (>= i 0)
-                                        (if (= (aget path i) (nth ^PathData o i))
+                                        (if (= (aget path i) (nth ^ProtonHistory o i))
                                           (recur (unchecked-dec-int i))
                                           false)
                                         true))))
@@ -390,13 +362,13 @@
 
 
 
-(defn PathData->fromStream
+#_(defn ProtonHistory->fromStream
   "Read the path and b data from two seperate files provided by Paniz, each one contains everything.
    pis : BufferedInputStream for MLP path file
    bis : BufferedInputstream for WEPL file, if provided; otherwise, WEPL data is provided by MLP path file
 
-   Return a PathData"
-  (^PathData [^long id ^java.io.BufferedInputStream pis]
+   Return a ProtonHistory"
+  (^ProtonHistory [^long id ^java.io.BufferedInputStream pis]
    (when-let [[^int length ^bytes len-buf] (read-int pis true)]
      (let [path-buf ^bytes (byte-array (* 4 length))
            path-arr ^ints  (int-array length)]
@@ -408,10 +380,10 @@
          (let [[^double chord-len   _] (read-double pis true)
                [^float       wepl   _] (read-float  pis true)
                [^FloatBuffer angles _] (read-floats pis 4 true)]
-           (->PathData id path-arr chord-len wepl
+           (->ProtonHistory id path-arr chord-len wepl
                        (.get angles 0) (.get angles 1) (.get angles 2) (.get angles 3)
                        (new HashMap)))))))
-  (^PathData [^long id ^java.io.BufferedInputStream pis ^java.io.BufferedInputStream bis]
+  (^ProtonHistory [^long id ^java.io.BufferedInputStream pis ^java.io.BufferedInputStream bis]
    (when-let [[^int length ^bytes len-buf] (read-int pis true)]
      (let [path-buf ^bytes (byte-array (* 4 length))
            path-arr ^ints  (int-array length)]
@@ -423,12 +395,12 @@
          (let [[^double chord-len   _] (read-double pis true)
                [^FloatBuffer angles _] (read-floats pis 4 true)
                [^float       wepl   _] (read-float  bis true)]
-           (->PathData id path-arr chord-len wepl
+           (->ProtonHistory id path-arr chord-len wepl
                        (.get angles 0) (.get angles 1) (.get angles 2) (.get angles 3)
                        (new HashMap))))))))
 
 
-(deftype HistoryInputStream [^java.io.BufferedInputStream pis ^java.io.BufferedInputStream bis ^long length
+#_(deftype HistoryInputStream [^java.io.BufferedInputStream pis ^java.io.BufferedInputStream bis ^long length
                              ^{:unsynchronized-mutable true :tag long} index
                              ^{:unsynchronized-mutable true :tag boolean} open?]
   IHistoryInput
@@ -500,32 +472,32 @@
   ;;             (set! index c))))
   ;;     (a/close! out-ch)))
 
-  (read-PathData [this]
-    (if-let [^PathData s (if bis
-                           (PathData->fromStream index pis bis)
-                           (PathData->fromStream index pis))]
+  (read-ProtonHistory [this]
+    (if-let [^ProtonHistory s (if bis
+                           (ProtonHistory->fromStream index pis bis)
+                           (ProtonHistory->fromStream index pis))]
       (do (set! index (inc index))
           s)))
 
-  (read-PathData [this out-ch]
+  (read-ProtonHistory [this out-ch]
     (loop []
-      (when-let [^PathData b (if bis
-                               (PathData->fromStream index pis bis)
-                               (PathData->fromStream index pis))]
+      (when-let [^ProtonHistory b (if bis
+                               (ProtonHistory->fromStream index pis bis)
+                               (ProtonHistory->fromStream index pis))]
         (set! index (inc index))
         (>!! out-ch b)
         (recur)))
     (a/close! out-ch))
 
-  (read-PathData [this out-ch batch-size]
-    ;; read in data as PathData
+  (read-ProtonHistory [this out-ch batch-size]
+    ;; read in data as ProtonHistory
     (let [batch-size ^long batch-size]
       (loop [acc ^objects (object-array batch-size)
              len ^long    (long 0)
              id  ^long    (long 0)]
-        (if-let [^PathData b (if bis
-                               (PathData->fromStream id pis bis)
-                               (PathData->fromStream id pis))]
+        (if-let [^ProtonHistory b (if bis
+                               (ProtonHistory->fromStream id pis bis)
+                               (ProtonHistory->fromStream id pis))]
           (if (< len batch-size)
             (do (aset acc len b)
                 (recur acc (unchecked-inc len) (unchecked-inc id)))
@@ -540,8 +512,8 @@
   (count-test [this]
     (loop [i ^long (long 0)]
       (if-let [b (if bis
-                   (PathData->fromStream i pis bis)
-                   (PathData->fromStream i pis))]
+                   (ProtonHistory->fromStream i pis bis)
+                   (ProtonHistory->fromStream i pis))]
         (recur (unchecked-inc i))
         i)))
 
@@ -551,9 +523,9 @@
      (loop [i          ^long (long 0)
             test-count ^long (long 0)]
        (if (< test-count n)
-         (if-let [^PathData b (if bis
-                                (PathData->fromStream i pis bis)
-                                (PathData->fromStream i pis))]
+         (if-let [^ProtonHistory b (if bis
+                                (ProtonHistory->fromStream i pis bis)
+                                (ProtonHistory->fromStream i pis))]
            (do (if-let [arr ^ints (.get ^HashMap m i)]
                  (do (if (Arrays/equals arr ^ints (.path b))
                        (.put res i true)
@@ -660,7 +632,7 @@
 (defn voxel-count-batch [histories rows cols slices]
   #_(let [n (count histories)]
     #_(timbre/info (format "Start counting voxels for %d histories" n))
-    (let [res (reduce (fn [^RealBlockVector acc ^PathData h]
+    (let [res (reduce (fn [^RealBlockVector acc ^ProtonHistory h]
                         (reduce (fn [^RealBlockVector acc idx] (acc idx (inc ^double (acc idx))))
                                 acc
                                 h))
@@ -672,8 +644,8 @@
         it  (clojure.lang.RT/iter histories)]
     (loop []
       (when (.hasNext it)
-        (let [path ^PathData (.next it)
-              arr ^ints (.path ^PathData path)
+        (let [path ^ProtonHistory (.next it)
+              arr ^ints (.path ^ProtonHistory path)
               len (alength arr)]
           (loop [i (long 0)]
             (if (< i len)
@@ -685,6 +657,27 @@
     acc))
 
 (def index-walker (sp/recursive-path [] p (sp/if-path #(instance? java.util.ArrayList %) [sp/ALL p] sp/STAY)))
+
+
+(defprotocol IHistoryIndex
+  ;; (counted?* [this])
+  ;; (addHistories*   [this coll slice length])
+  ;; (removeHistories* [this i] [this i j])
+  (image-size* [this] "return the number of voxels of the full image.")
+  (slice-size* [this] "return the size of a slice")
+  (mergeIndex*   [this m])
+  (set-x0* [this x])
+  ;; (index* [this] "return a key map")
+  (summary* [this] "Print a summary for current index")
+  (trimToSize* [this]))
+
+
+(defprotocol IVoxelHistogram
+  (reset-hit-counts* [this])
+  (counted?* [this])
+  (count-voxel-hits* [this] [this forced])
+  #_(getVoxelCount* [this i] [this i j]))
+
 
 (deftype HistoryIndex [^ArrayList index
                        ^int rows ^int cols ^int slices
@@ -820,15 +813,15 @@
                              acc)))))
           (do (set! total (unchecked-add-int total sub-total))))))
     #_(loop [m1 m]
-      (when-let [[[^int s ^ArrayList m2] & rst-m1] m1]
-        (let [entry ^ArrayList (.get index s)]
-          (loop [m2 m2]
-            (when-let [[[^int l ^ArrayList hist] & rst-m2] m2]
-              (ensureSize entry l #(ArrayList.))
-              (.addAll ^ArrayList (.get entry l) hist)
-              (set! total (unchecked-add-int total (count hist)))
-              (recur rst-m2))))
-        (recur rst-m1))))
+        (when-let [[[^int s ^ArrayList m2] & rst-m1] m1]
+          (let [entry ^ArrayList (.get index s)]
+            (loop [m2 m2]
+              (when-let [[[^int l ^ArrayList hist] & rst-m2] m2]
+                (ensureSize entry l #(ArrayList.))
+                (.addAll ^ArrayList (.get entry l) hist)
+                (set! total (unchecked-add-int total (count hist)))
+                (recur rst-m2))))
+          (recur rst-m1))))
 
   (set-x0* [this x]
     (copy! ^RealBlockVector x x0))
@@ -888,8 +881,8 @@
                               data-len (min (+ i ^long batch-size) data-len)]
                           (loop [i (long i)]
                             (if (< i data-len)
-                              (let [path ^PathData (.get data i)
-                                    arr  ^ints     (.path ^PathData path)
+                              (let [path ^ProtonHistory (.get data i)
+                                    arr  ^ints     (.path ^ProtonHistory path)
                                     alen ^int      (alength arr)]
                                 (loop [j (long 0)]
                                   (if (< j alen)
@@ -929,9 +922,9 @@
                       (a/>!! data-ch [[data i data-len] hits start-idx len])
                       (recur (unchecked-add i ^long batch-size))))
                   #_(loop [parts (partition-all batch-size data)]
-                    (when parts
-                      (a/>!! data-ch [(first parts) hits start-idx len])
-                      (recur (next parts))))
+                      (when parts
+                        (a/>!! data-ch [(first parts) hits start-idx len])
+                        (recur (next parts))))
                   (recur (next s)))
                 (a/close! data-ch)))
             (catch Exception ex
@@ -979,7 +972,7 @@
 (defn verify-path-length [^ArrayList arr len]
   (let [n (.size arr)]
     (loop [i (long 0)]
-      (let [sample ^PathData (.get arr (rand-int n))
+      (let [sample ^ProtonHistory (.get arr (rand-int n))
             [begin end] (min-max-ints (.path sample))]))))
 
 (defn verify-index-structure [^HistoryIndex index global?]

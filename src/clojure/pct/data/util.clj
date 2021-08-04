@@ -1,6 +1,6 @@
 (ns pct.data.util
   (:use clojure.core)
-  (:require pct.data)
+  (:require [pct.data])
   (:import [java.util ArrayList]))
 
 
@@ -32,18 +32,18 @@
          data
          (fn ^long [a b]
            (cond
-             (> ^int (.id  ^pct.data.PathData a) ^int (.id  ^pct.data.PathData b)) (int  1)
-             (< ^int (.id  ^pct.data.PathData a) ^int (.id  ^pct.data.PathData b)) (int -1)
-             (= ^int (.id  ^pct.data.PathData a) ^int (.id  ^pct.data.PathData b)) (int  0))))
+             (> ^int (.id  ^pct.data.ProtonHistory a) ^int (.id  ^pct.data.ProtonHistory b)) (int  1)
+             (< ^int (.id  ^pct.data.ProtonHistory a) ^int (.id  ^pct.data.ProtonHistory b)) (int -1)
+             (= ^int (.id  ^pct.data.ProtonHistory a) ^int (.id  ^pct.data.ProtonHistory b)) (int  0))))
         true)
     :entry-xy
     (do (java.util.Collections/sort
          data
          (fn ^long [a b]
            (cond
-             (> ^float (.entry-xy  ^pct.data.PathData a) ^float (.entry-xy  ^pct.data.PathData b)) (int  1)
-             (< ^float (.entry-xy  ^pct.data.PathData a) ^float (.entry-xy  ^pct.data.PathData b)) (int -1)
-             (= ^float (.entry-xy  ^pct.data.PathData a) ^float (.entry-xy  ^pct.data.PathData b)) (int  0))))
+             (> ^float (.entry-xy  ^pct.data.ProtonHistory a) ^float (.entry-xy  ^pct.data.ProtonHistory b)) (int  1)
+             (< ^float (.entry-xy  ^pct.data.ProtonHistory a) ^float (.entry-xy  ^pct.data.ProtonHistory b)) (int -1)
+             (= ^float (.entry-xy  ^pct.data.ProtonHistory a) ^float (.entry-xy  ^pct.data.ProtonHistory b)) (int  0))))
         true)
 
     :entry-xz
@@ -51,9 +51,9 @@
          data
          (fn ^long [a b]
            (cond
-             (> ^float (.entry-xz  ^pct.data.PathData a) ^float (.entry-xz  ^pct.data.PathData b)) (int  1)
-             (< ^float (.entry-xz  ^pct.data.PathData a) ^float (.entry-xz  ^pct.data.PathData b)) (int -1)
-             (= ^float (.entry-xz  ^pct.data.PathData a) ^float (.entry-xz  ^pct.data.PathData b)) (int  0))))
+             (> ^float (.entry-xz  ^pct.data.ProtonHistory a) ^float (.entry-xz  ^pct.data.ProtonHistory b)) (int  1)
+             (< ^float (.entry-xz  ^pct.data.ProtonHistory a) ^float (.entry-xz  ^pct.data.ProtonHistory b)) (int -1)
+             (= ^float (.entry-xz  ^pct.data.ProtonHistory a) ^float (.entry-xz  ^pct.data.ProtonHistory b)) (int  0))))
         true)
 
     false))

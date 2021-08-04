@@ -21,6 +21,8 @@
 
 (defonce ^:private log-chan (clojure.core.async/chan (+ pct.util.system/LogicalCores 1024)))
 
+
+
 (taoensso.timbre/merge-config! {:timestamp-opts {:pattern "yyyy-MM-dd @ HH:mm:ss Z"
                                                  :locale  :jvm-default
                                                  :timezone (java.util.TimeZone/getTimeZone "America/Chicago")}
@@ -40,24 +42,49 @@
 
 (defn get-timestamp [] (.format (java.text.SimpleDateFormat. "YYYY-MM-dd'T'HH-mm-ss_Z") (java.util.Date.)))
 
-(defn ns-all-vars[n]
-  (filter (fn[[_ v]]
-            (and (instance? clojure.lang.Var v)
-                 (= n (.getName ^clojure.lang.Namespace (.ns ^clojure.lang.Var v)))))
-          (ns-map n)))
+(defn ns-all-vars
+  "List all vars of a given namespace"
+  [ns]
+  (filterv #(and (instance? clojure.lang.Var %)
+                 (= ns (.getName ^clojure.lang.Namespace (.ns ^clojure.lang.Var %))))
+          (vals (ns-map ns))))
 
-(defn ns-publics-list [ns] (#(list (ns-name %) (map first (ns-publics %))) ns))
+(defn ns-publics-list [ns]
+  (list (ns-name ns) (keys (ns-publics ns))))
+
+(defn ns-clear-vars
+  "Clear all variables of a given namespace"
+  ([]
+   (let [ns (ns-name *ns*)]
+     (println "using current namespace: " ns)
+     (ns-clear-vars ns)))
+  ([ns]
+   (doseq [[k v] (ns-map ns)]
+     (when (and (instance? clojure.lang.Var v)
+                (= ns (.getName ^clojure.lang.Namespace (.ns ^clojure.lang.Var v))))
+       ;; (println k)
+       (ns-unmap ns k)))
+   #_(let [it (clojure.lang.RT/iter (keys (ns-publics ns)))]
+     (loop []
+       (when (.hasNext it)
+         (let [var (.next it)]
+          (println var)
+          (ns-unmap ns var)
+          (recur)))))))
 
 (defn localhost []
   (java.net.InetAddress/getLocalHost))
 
+(defn hostname []
+  (.getHostName (java.net.InetAddress/getLocalHost)))
+
 (defn readableFormat [n]
   (let [iter (clojure.lang.RT/iter ["B" "KB" "MB" "GB" "TB"])]
-   (loop [n ^double (double n)
-          unit (.next iter)]
-     (if (or (< n 1024.0) (not (.hasNext iter)))
-       [n unit]
-       (recur (/ n 1024.0) (.next iter))))))
+    (loop [n ^double (double n)
+           unit (.next iter)]
+      (if (or (< n 1024.0) (not (.hasNext iter)))
+        [n unit]
+        (recur (/ n 1024.0) (.next iter))))))
 
 ;; Source: https://gist.github.com/baskeboler/7d226374582246d28b25801e28e18216
 (defn ^java.awt.datatransfer.Clipboard get-clipboard

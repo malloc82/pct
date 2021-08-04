@@ -14,19 +14,26 @@
             [uncomplicate.neanderthal
              [core   :refer :all]
              [native :refer :all]])
-  (:import [java.nio ByteOrder ByteBuffer IntBuffer]
-           [java.io FileOutputStream BufferedOutputStream BufferedInputStream RandomAccessFile File]
+  (:import [pct.data ProtonHistory]
+           [java.nio ByteOrder ByteBuffer IntBuffer]
+           [java.io FileOutputStream FileInputStream BufferedOutputStream BufferedInputStream RandomAccessFile File]
            [java.util HashMap ArrayList Scanner Arrays]
            [java.awt.image BufferedImage Raster WritableRaster]
            [javax.imageio ImageIO]
            [uncomplicate.neanderthal.internal.host.buffer_block IntegerBlockVector RealBlockVector]))
 
 
-
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
 
-(defonce header-length ^int (count (str (Integer/MAX_VALUE))))
+#_(defonce header-length ^int (count (str (Integer/MAX_VALUE))))
+
+(defn ^:private sseq [s fnext]
+  (lazy-seq
+   (let [b (fnext s)]
+     (if b
+       (cons b (sseq s fnext))
+       '()))))
 
 
 (defn backup [f]
@@ -41,6 +48,7 @@
               (println (.getName f3))
               (.renameTo ^File f f3)))))
       (.renameTo ^File f f2))))
+
 
 (defn backupFile [file]
   (let [name (.getName ^File file)
@@ -80,150 +88,147 @@
               (.renameTo ^File old ^file a))))))
     (.renameTo ^File file old)))
 
+
+(def ^{:private true :tag 'bytes} __int_buffer__    (byte-array 4))
+(def ^{:private true :tag 'bytes} __long_buffer__   (byte-array 8))
+(def ^{:private true :tag 'bytes} __float_buffer__  (byte-array 4))
+(def ^{:private true :tag 'bytes} __double_buffer__ (byte-array 8))
+(def ^{:private true :tag 'long}  __header_length__ 32)
+(def ^{:private true :tag 'int}   __max_intersections__ (int 1280)) ;; according to pCT_reconstruction code base
+(def ^{:private true :tag 'ints}  __path_buffer__   (byte-array (* 4 __max_intersections__))) ;; 1280 is the max intersections
+(def ^{:private true :tag 'ByteOrder} __ENDIAN__ ByteOrder/LITTLE_ENDIAN)
+(def ^{:private true :tag 'long}  __IO_buffer_size__ (long (* 16 1024 1024)))
+
+
 (defmacro read-int
-  ([is] `(read-int ~is nil))
-  ([is save-buf]
+  "Read an integer from an input stream 'is'
+   If a byte buffer is provided, use the given buffer, otherwise use a local created buffer"
+  ([is ^ByteOrder endian]
    (let [buffer (gensym)]
-     `(let [~(with-meta buffer {:tag "bytes"}) (byte-array 4)]
-        (when (not= (.read ~is ~buffer) -1)
-          ~(if save-buf
-             `[(int (-> (ByteBuffer/wrap ~buffer)
-                        (.order ByteOrder/LITTLE_ENDIAN)
-                        (.getInt)))
-               ~buffer]
-             `(int (-> (ByteBuffer/wrap ~buffer)
-                       (.order ByteOrder/LITTLE_ENDIAN)
-                       (.getInt)))))))))
+     `(let [~(with-meta buffer {:tag bytes}) (byte-array 4)]
+        (read-int ~is ~endian ~buffer))))
+  ([is ^ByteOrder endian ^bytes buffer]
+   `(if (= (.read ~is ~buffer) -1)
+      (throw (java.io.IOException. "Error: Unexpected EOF when trying to read int"))
+      (int (-> (ByteBuffer/wrap ~buffer)
+               (.order ~endian)
+               (.getInt))))))
 
 
-(defmacro write-int [os]
-  (let [buffer (gensym)]
-    `(let [~(with-meta buffer {:tag "bytes"}) (byte-array 4)]
-       (.write ~os ~buffer)
-       [(int (-> (ByteBuffer/wrap ~buffer)
-                 (.order ByteOrder/LITTLE_ENDIAN)
-                 (.getInt)))
-        ~buffer])))
+(defmacro read-ints
+  [is endian array]
+  (let [buffer (gensym)
+        arr    (gensym)]
+    `(let [~(with-meta arr {:tag ints}) ~array
+           ~(with-meta buffer {:tag bytes}) (byte-array (* 4 (alength ~arr)))]
+       (if (= (.read ~is ~buffer) -1)
+         (throw (java.io.IOException. (format "Unexpected EOF when reading int-array with length=%d" (alength ~arr))))
+         (do (-> (ByteBuffer/wrap ~buffer)
+                 (.order ~endian)
+                 .asIntBuffer
+                 (.get ~arr))
+             ~arr)))))
+
+
+(defmacro read-long
+  "Read an long from an input stream 'is'
+   If a byte buffer is provided, use the given buffer, otherwise use a local created buffer"
+  ([is ^ByteOrder endian]
+   (let [buffer (gensym)]
+     `(let [~(with-meta buffer {:tag bytes}) (byte-array 8)]
+        (read-long ~is ~endian ~buffer))))
+  ([is ^ByteOrder endian ^bytes buffer]
+   `(if (= (.read ~is ~buffer) -1)
+      (throw (java.io.IOException. "Error: Unexpected EOF when trying to read long"))
+      (long (-> (ByteBuffer/wrap ~buffer)
+                (.order ~endian)
+                (.getLong))))))
+
 
 (defmacro read-float
-  ([is] `(read-float ~is nil))
-  ([is save-buf]
+  "Read an float from an input stream 'is'
+   If a byte buffer is provided, use thnnnnnnne given buffer, otherwise use a local created buffer"
+  ([is ^ByteOrder endian]
    (let [buffer (gensym)]
-     `(let [~(with-meta buffer {:tag "bytes"}) (byte-array 4)]
-        (when (not= (.read ~is ~buffer) -1)
-          ~(if save-buf
-             `[(float (-> (ByteBuffer/wrap ~buffer)
-                          (.order ByteOrder/LITTLE_ENDIAN)
-                          (.getFloat)))
-               ~buffer]
-             `(float (-> (ByteBuffer/wrap ~buffer)
-                         (.order ByteOrder/LITTLE_ENDIAN)
-                         (.getFloat))))))))
-  #_`(let [buffer# (byte-array 4)]
-     (.read ~is buffer#)
-     [(float (-> (ByteBuffer/wrap buffer#)
-                 (.order ByteOrder/LITTLE_ENDIAN)
-                 (.getFloat)))
-      buffer#]))
+     `(let [~(with-meta buffer {:tag bytes}) (byte-array 4)]
+        (read-float ~is ~endian ~buffer))))
+  ([is ^ByteOrder endian ^bytes buffer]
+   `(if (= (.read ~is ~buffer) -1)
+      (throw (java.io.IOException. "Error: Unexpected EOF when trying to read float"))
+      (float (-> (ByteBuffer/wrap ~buffer)
+                 (.order ~endian)
+                 (.getFloat))))))
+
 
 (defmacro read-floats
-  ([is n] `(read-float ~is ~n nil))
-  ([is n save-buf]
-   (let [buffer (gensym)]
-     `(let [~(with-meta buffer {:tag "bytes"}) (byte-array (* 4 ~n))]
-        (when (not= (.read ~is ~buffer) -1)
-          ~(if save-buf
-             `[(-> (ByteBuffer/wrap ~buffer)
-                   (.order ByteOrder/LITTLE_ENDIAN)
-                   (.asFloatBuffer))
-               ~buffer]
-             `(-> (ByteBuffer/wrap ~buffer)
-                  (.order ByteOrder/LITTLE_ENDIAN)
-                  (.asFloatBuffer)))))))
-  #_`(let [buffer# (byte-array 4)]
-     (.read ~is buffer#)
-     [(float (-> (ByteBuffer/wrap buffer#)
-                 (.order ByteOrder/LITTLE_ENDIAN)
-                 (.getFloat)))
-      buffer#]))
+  [is endian array]
+  (let [buffer (gensym)
+        arr    (gensym)]
+    `(let [~(with-meta arr {:tag floats}) ~array
+           ~(with-meta buffer (:tag bytes)) (byte-array (* 4 (alength ~arr)))]
+       (if (= (.read ~is ~buffer) -1)
+         (throw (java.io.IOException. (format "Unexpected EOF when reading float-array with length=%d" (alength ~arr))))
+         (do (-> (ByteBuffer/wrap ~buffer)
+                 (.order ~endian)
+                 .asFloatBuffer
+                 (.get ~arr))
+             ~arr)))))
+
 
 (defmacro read-double
-  ([is] `(read-double ~is nil))
-  ([is save-buf]
+  "Read an double from an input stream 'is'
+   If a byte buffer is provided, use the given buffer, otherwise use a local created buffer"
+  ([is ^ByteOrder endian]
    (let [buffer (gensym)]
-     `(let [~(with-meta buffer {:tag "bytes"}) (byte-array 8)]
-        (when (not= (.read ~is ~buffer) -1)
-          ~(if save-buf
-             `[(double (-> (ByteBuffer/wrap ~buffer)
-                           (.order ByteOrder/LITTLE_ENDIAN)
-                           (.getDouble)))
-               ~buffer]
-             `(double (-> (ByteBuffer/wrap ~buffer)
-                          (.order ByteOrder/LITTLE_ENDIAN)
-                          (.getDouble)))))))))
-
-#_(defmacro read-double [is]
-  `(let [buffer# (byte-array 8)]
-     (.read ~is buffer#)
-     [(double (-> (ByteBuffer/wrap buffer#)
-                  (.order ByteOrder/LITTLE_ENDIAN)
-                  (.getDouble)))
-      buffer#]))
-
-
-(defmacro int-buffer [i]
-  `(let [buf# ^bytes (byte-array 4)]
-     (.put ^IntBuffer (-> (ByteBuffer/wrap buf#)
-                          (.order ByteOrder/LITTLE_ENDIAN)
-                          .asIntBuffer)
-           0 ~i)
-     buf#))
-
-(defn ^bytes int-array-buffer [^ints arr]
-  (let [len ^int (alength arr)
-        buf ^bytes (byte-array (* 4 len))
-        byte-buf ^IntBuffer (-> (ByteBuffer/wrap buf)
-                                 (.order ByteOrder/LITTLE_ENDIAN)
-                                 .asIntBuffer)]
-     (loop [i ^int (int 0)]
-       (if (< i len)
-         (do
-           (.put byte-buf i (aget arr i))
-           (recur (unchecked-inc-int i)))
-         buf))))
+     `(let [~(with-meta buffer {:tag bytes}) (byte-array 8)]
+        (read-double ~is ~endian ~buffer))))
+  ([is ^ByteOrder endian ^bytes buffer]
+   `(if (= (.read ~is ~buffer) -1)
+      (throw (java.io.IOException. "Error: Unexpected EOF when trying to read double"))
+      (double (-> (ByteBuffer/wrap ~buffer)
+                  (.order ~endian)
+                  (.getDouble))))))
 
 
 (defn read-header
   "Header format: number of histories is store as string, followed with a new line (0x0a)"
-  [^java.io.BufferedInputStream is & {:keys [size]
-                                      :or   {size (inc ^int header-length)}}]
-  (let [end-idx (unchecked-dec-int size)]
-    (loop [c      ^byte  (unchecked-byte (.read is))
-           header ^bytes (byte-array size)
-           idx    ^int   (int 0)]
-      (if (or (>= idx end-idx)
-              (= c (byte 10))) ;; (byte 10) is \n
-        (Integer/parseInt (String. header 0 idx))
-        (do
-          (aset header idx c)
-          (recur (unchecked-byte (.read is))
-                 header
-                 (unchecked-inc-int idx)))))))
+  (^long [^java.io.BufferedInputStream is]
+   (read-header is __header_length__))
+  (^long [^java.io.BufferedInputStream is ^long buf-size]
+   (let [header (byte-array buf-size)
+         __newline__ (byte 10)]
+     (loop [i (long 0)]
+       (if (< i buf-size)
+         (let [c (byte (.read is))]
+           (if (= c __newline__)
+             (Long/parseLong (String. header 0 i))
+             (do (aset header i c)
+                 (recur (unchecked-inc i)))))
+         (throw (java.io.IOException. (format "Error: Unexpected end when reading header. Header buffer might be too small (%d)."
+                                              buf-size))))))))
 
 
-(defn write-header
-  "Header format: number of histories is store as string, followed with a new line (0x0a)
-   "
-  [^java.io.RandomAccessFile os header & {:keys [fixed size]
-                                          :or {fixed true size header-length}}]
-  (let [curr ^long (.getFilePointer os)]
-    (.seek os 0)
-    (if fixed
-      (.writeBytes os  (format (format "%%0%dd\n" header-length) header))
-      (.writeBytes os  (format "%d\n" header)))
-    (when (> curr 0)
-      (.seek os curr))))
 
+;; (defmacro int-buffer [i]
+;;   `(let [buf# ^bytes (byte-array 4)]
+;;      (.put ^IntBuffer (-> (ByteBuffer/wrap buf#)
+;;                           (.order ByteOrder/LITTLE_ENDIAN)
+;;                           .asIntBuffer)
+;;            0 ~i)
+;;      buf#))
+
+;; (defn ^bytes int-array-buffer [^ints arr]
+;;   (let [len ^int (alength arr)
+;;         buf ^bytes (byte-array (* 4 len))
+;;         byte-buf ^IntBuffer (-> (ByteBuffer/wrap buf)
+;;                                  (.order ByteOrder/LITTLE_ENDIAN)
+;;                                  .asIntBuffer)]
+;;      (loop [i ^int (int 0)]
+;;        (if (< i len)
+;;          (do
+;;            (.put byte-buf i (aget arr i))
+;;            (recur (unchecked-inc-int i)))
+;;          buf))))
 
 
 ;; (defn initReconFromFile
@@ -253,9 +258,33 @@
           vctr))))
 
 
+(defn slice-dimension
+  [file]
+  (with-open [^java.io.BufferedReader rdr (clojure.java.io/reader file)]
+    (let [first-line (clojure.string/split (.readLine rdr) #"\s+")]
+      [(unchecked-inc (count (line-seq rdr))) (count first-line)])))
+
+
+(defn find-slices
+  ([^String folder]
+   (find-slices folder #"x_0_\d+\.txt"))
+  ([^String folder ^java.util.regex.Pattern pattern]
+   {:pre [(instance? java.util.regex.Pattern pattern)]}
+   (filterv (fn [^java.io.File f]
+              (re-matches pattern  (.getName f)))
+            (file-seq (clojure.java.io/file folder)))))
+
+
+(defn dataset-dimension
+  [^String folder ^java.util.regex.Pattern pattern]
+  (let [slices (find-slices folder pattern)]
+    (when (not (empty? slices))
+      (conj (slice-dimension (first slices)) (count slices)))))
+
+
 (defn load-vctr
-  (^RealBlockVector [filename]
-   (with-open [rdr (io/reader filename)]
+  (^RealBlockVector [file]
+   (with-open [rdr (io/reader file)]
      (let [str-vals (s/split (slurp rdr) #"\s+")
            len (count str-vals)
            v ^RealBlockVector (dv len)
@@ -265,9 +294,9 @@
            (do (v i (java.lang.Double/parseDouble (.next it)))
                (recur (unchecked-inc i)))
            v)))))
-  (^RealBlockVector [filename vctr]
+  (^RealBlockVector [file ^RealBlockVector vctr]
    ;; (println "load-vctr2 v0.2")
-   (with-open [rdr (io/reader filename)]
+   (with-open [rdr (io/reader file)]
      (let [str-vals (s/split (slurp rdr) #"\s+")]
        (assert (= (dim vctr) (count str-vals)))
        (reduce-kv (fn [acc k v]
@@ -276,128 +305,251 @@
                   vctr
                   str-vals)))))
 
-(defn load-double-array
-  ^doubles [filename]
-  (with-open [rdr (io/reader filename)]
-    (let [str-vals (s/split (slurp rdr) #"\s+")
-          len (count str-vals)
-          data (double-array len)
-          it (clojure.lang.RT/iter str-vals)]
-      (dotimes [i len]
-        (aset data i (java.lang.Double/parseDouble (.next it))))
-      data)))
 
-(defn load-slice
-  [filename opts]
-  (case (:type opts)
-    :array  (load-double-array filename)
-    :vector (load-vctr filename)
-    (do (println "Unknow type"))))
+;; (defn load-double-array
+;;   (^doubles [^String filename]
+;;    (load-double-array filename nil))
+;;   (^doubles [^String filename opts]
+;;    (let [offset (or (:offset opts) 0)
+;;          data   (or (:data opts) ())]
+;;     (with-open [rdr (io/reader filename)]
+;;       (let [str-vals (s/split (slurp rdr) #"\s+")
+;;             len (count str-vals)
+;;             data (double-array len)
+;;             it (clojure.lang.RT/iter str-vals)]
+;;         (dotimes [i len]
+;;           (aset data i (java.lang.Double/parseDouble (.next it))))
+;;         data)))))
 
 
-(defn load-series [prefix & {:keys [rows cols slices ext iter] :or {rows 200 cols 200 slices 16 ext "txt" iter 0}}]
-  ;;Verify files
-  (dotimes [i slices]
-    (let [fname (format "%s_%d_%d.%s" prefix iter i ext)]
-      (if (.exists ^File (File. fname))
-        (timbre/info (format "%s ... OK." fname ))
-        (java.io.FileNotFoundException. (format "%s not found" fname)))))
-
-  (let [length (* (long rows) (long cols))
-        x (dv (* (long length) (long slices)))]
-    (loop [offset (long 0)
-           i (long 0)]
-      (if (< i (long slices))
-        (let [fname (format "%s_%d_%d.%s" prefix iter i ext)
-              sv (subvector x offset length)]
-          (load-vctr fname sv)
-          (recur (+ offset  length) (unchecked-inc-int i)))
-        x))))
-
-(defn load-series2
-  "Use java array, not yet finished"
-  ^doubles [prefix & {:keys [rows cols slices ext iter] :or {rows 200 cols 200 slices 16 ext "txt" iter 0}}]
-  ;;Verify files
-  (dotimes [i slices]
-    (let [fname (format "%s_%d_%d.%s" prefix iter i ext)]
-      (if (.exists ^File (File. fname))
-        (timbre/info (format "%s ... OK." fname ))
-        (java.io.FileNotFoundException. (format "%s not found" fname)))))
-
-  (let [length (* ^long rows ^long cols)
-        x (double-array (* length ^long slices))]
-    (loop [offset (long 0)
-           i (long 0)]
-      (if (< i ^long slices)
-        (let [fname (format "%s_%d_%d.%s" prefix iter i ext)
-              sv (subvector x offset length)]
-          (load-vctr fname sv)
-          (recur (+ offset  length) (unchecked-inc-int i)))
-        x))))
+;; (defn load-slice
+;;   [^String filename opts]
+;;   (case (:type opts)
+;;     :array  (load-double-array filename opts)
+;;     :vector (load-vctr filename opts)
+;;     (do (println "Unknow type"))))
 
 
-(defn save-x [x prefix & {:keys [id rows cols ext] :or {id 0 rows 200 cols 200 ext "txt"}}]
-  (let [fname (format "%s_%d.%s" prefix id ext)
-        file ^File (java.io.File. fname)
-        z ^float (float 0)]
+(defn load-series
+  "folder  : dataset folder
+   pattern : file pattern, need to include group pattern"
+  ;; e.g. #"x_0_(\d+)\.txt"
+  (^RealBlockVector [folder pattern]
+   (load-series folder pattern nil))
+  (^RealBlockVector [folder pattern opts]
+   (if-let [[^long rows ^long cols ^long slices-found] (if (and (:rows opts) (:cols opts) (:slices opts))
+                                                         [(long (:rows opts)) (long (:cols opts)) (long (:slices opts))]
+                                                         (dataset-dimension folder pattern))]
+     (do (println "dataset found, dimension:" [rows cols slices-found])
+         (println "requested slices: " (:slices opts))
+         (let [^long slices (if-let [s (:slices opts)]
+                              (if (< (long s) slices-found)
+                                (long s)
+                                (throw (Exception. (format "Error: requested %d slices, but only %d available."
+                                                           s slices-found))))
+                              (long slices-found))
+               sorted-files (sort-by (fn [^java.io.File f]
+                                       (let [match (re-find pattern (.getName f))]
+                                         (if (coll? match)
+                                           (-> match
+                                               second
+                                               Integer/parseInt)
+                                           (throw (Exception. (format "Error: Pattern %s does not contain group" pattern))))))
+                                     (find-slices folder pattern))
+               length (* (long rows) (long cols))
+               x (dv (* (long length) (long slices)))]
+           (println (format "Loading %d slices" slices))
+           (let [it (clojure.lang.RT/iter sorted-files)]
+             (loop [i (long 0)]
+               (if (and (< i slices) (.hasNext it))
+                 (let [^java.io.File f (.next it)
+                       sv (subvector x (* i length) length)]
+                   (println (format "%3d : %s" i (.getName f)))
+                   (load-vctr f sv)
+                   (recur (unchecked-inc i)))
+                 x)))))
+     (println "dataset not found"))))
+
+
+;; (defn load-series2
+;;   "Use java array, not yet finished"
+;;   ^doubles [prefix & {:keys [rows cols slices ext iter] :or {rows 200 cols 200 slices 16 ext "txt" iter 0}}]
+;;   ;;Verify files
+;;   (dotimes [i slices]
+;;     (let [fname (format "%s_%d_%d.%s" prefix iter i ext)]
+;;       (if (.exists ^File (File. fname))
+;;         (timbre/info (format "%s ... OK." fname ))
+;;         (java.io.FileNotFoundException. (format "%s not found" fname)))))
+
+;;   (let [length (* ^long rows ^long cols)
+;;         x (double-array (* length ^long slices))]
+;;     (loop [offset (long 0)
+;;            i (long 0)]
+;;       (if (< i ^long slices)
+;;         (let [fname (format "%s_%d_%d.%s" prefix iter i ext)
+;;               sv (subvector x offset length)]
+;;           (load-vctr fname sv)
+;;           (recur (+ offset  length) (unchecked-inc-int i)))
+;;         x))))
+
+
+(defn save-x-txt
+  [^RealBlockVector x rows cols fname & {:keys [folder] :or {folder "."}}]
+  {:pre [(= (dim x) (* (long rows) (long cols)))]}
+  (let [fname (format "%s/%s.txt" folder fname)
+        file ^File   (java.io.File. fname)
+        z    ^double (double 0.0)]
     (assert (= (dim x) (* (long rows) (long cols))))
-    (when-let [d ^File (.getParentFile file)]
-      (.mkdirs d))
-    (let [fmt ^java.text.DecimalFormat (java.text.DecimalFormat. "0.#######")]
-      (with-open [w (clojure.java.io/writer fname :append false)]
-        (loop [s-vals (partition rows (map #(if (= % z) "0" (.format fmt %)) x))]
-          (when-let [[line & rst] s-vals]
-            (.write w (format "%s \n" (clojure.string/join " " line)))
-            (recur rst)))))))
+    (if (.exists file)
+      (throw (Exception. (format "Error: File %s already exists." fname)))
+      (do (when-let [d ^File (.getParentFile file)]
+            (.mkdirs d))
+          (let [fmt ^java.text.DecimalFormat (java.text.DecimalFormat. "0.#######")]
+            (with-open [w (clojure.java.io/writer fname :append false)]
+              (loop [s-vals (partition rows (map #(if (= % z) "0" (.format fmt %)) x))]
+                (when-let [[line & rst] s-vals]
+                  (.write w (format "%s\n" (clojure.string/join " " line)))
+                  (recur rst)))))))))
 
 
-(defn save-x2
-  "Use java array, not yet finished."
-  [x fname & {:keys [rows cols]}]
-  {:pre [(int? rows) (int? cols) (= (dim x) (* (long rows) (long cols)))]}
-  (let [file ^File (java.io.File. ^String fname)
-        z ^float (float 0)]
-    (when-let [d ^File (.getParentFile file)]
-      (.mkdirs d))
-    (let [fmt ^java.text.DecimalFormat (java.text.DecimalFormat. "0.#######")]
-      (with-open [w (clojure.java.io/writer fname :append false)]
-        (loop [s-vals (partition rows (map #(if (= % z) "0" (.format fmt %)) x))]
-          (when-let [[line & rst] s-vals]
-            (.write w (format "%s \n" (clojure.string/join " " line)))
-            (recur rst)))))))
+;; (defn save-x2
+;;   "Use java array, not yet finished."
+;;   [x fname & {:keys [rows cols]}]
+;;   {:pre [(int? rows) (int? cols) (= (dim x) (* (long rows) (long cols)))]}
+;;   (let [file ^File (java.io.File. ^String fname)
+;;         z ^float (float 0)]
+;;     (when-let [d ^File (.getParentFile file)]
+;;       (.mkdirs d))
+;;     (let [fmt ^java.text.DecimalFormat (java.text.DecimalFormat. "0.#######")]
+;;       (with-open [w (clojure.java.io/writer fname :append false)]
+;;         (loop [s-vals (partition rows (map #(if (= % z) "0" (.format fmt %)) x))]
+;;           (when-let [[line & rst] s-vals]
+;;             (.write w (format "%s \n" (clojure.string/join " " line)))
+;;             (recur rst)))))))
 
-(defn save-img
-  "Save a slice as a png image"
-  [^doubles x [^long rows ^long cols] & {:keys [file-prefix iter slice-idx copy?]
-                                         :or {file-prefix "x"
-                                              iter (long 0)
-                                              slice-idx (long 0)
-                                              copy? true}}]
-  {:pre [(= (alength x) (* rows cols))]}
-  (let [image ^BufferedImage (BufferedImage. cols rows BufferedImage/TYPE_BYTE_GRAY)
-        len ^int (alength x)
-        data ^doubles (if copy? (Arrays/copyOf x len) x)
-        [^double _min ^double _max] (pct.common/min-max-doubles data)
-        _r ^double (- _max _min)]
-    (when-not (= _r 0.0)
-      (dotimes [i len]
-        (aset data i (double (Math/round (* (/ (- (aget data i) _min) _r) 255))))))
-    (.setPixels ^WritableRaster (.getRaster image) 0 0 cols rows data)
-    (ImageIO/write image "png" (clojure.java.io/file (format "%s_%s_%s.png" file-prefix iter slice-idx)))))
 
-(defn save-series-img
-  "Save series as png files, and write reconstruction optinos as json to a file in the folder"
-  [^doubles x [^long rows ^long cols ^long slices] folder recon-opts])
+;; (defn save-img
+;;   "Save a slice as a png image"
+;;   [^doubles x [^long rows ^long cols] & {:keys [file-prefix iter slice-idx copy?]
+;;                                          :or {file-prefix "x"
+;;                                               iter (long 0)
+;;                                               slice-idx (long 0)
+;;                                               copy? true}}]
+;;   {:pre [(= (alength x) (* rows cols))]}
+;;   (let [image ^BufferedImage (BufferedImage. cols rows BufferedImage/TYPE_BYTE_GRAY)
+;;         len ^int (alength x)
+;;         data ^doubles (if copy? (Arrays/copyOf x len) x)
+;;         [^double _min ^double _max] (pct.common/min-max-doubles data)
+;;         _r ^double (- _max _min)]
+;;     (when-not (= _r 0.0)
+;;       (dotimes [i len]
+;;         (aset data i (double (Math/round (* (/ (- (aget data i) _min) _r) 255))))))
+;;     (.setPixels ^WritableRaster (.getRaster image) 0 0 cols rows data)
+;;     (ImageIO/write image "png" (clojure.java.io/file (format "%s_%s_%s.png" file-prefix iter slice-idx)))))
+
+
+(defn save-x-img
+  [^RealBlockVector x rows cols fname & {:keys [folder max min] :or {folder "."}}]
+  {:pre [(= (dim x) (* (long rows) (long cols)))]}
+  (let [fname (format "%s/%s.png" folder fname)
+        im-file ^File (java.io.File. fname)
+        z    ^double (double 0.0)]
+    (assert (= (dim x) (* (long rows) (long cols))))
+    (if (.exists im-file)
+      (let [msg (format "Error: File %s already exists." fname)]
+        (println msg)
+        (timbre/info msg)
+        nil)
+      (do (when-let [d ^File (.getParentFile im-file)]
+            (.mkdirs d))
+          (let [len  (* (long rows) (long cols))
+                ^doubles data (transfer! x (double-array len))
+                image ^BufferedImage (BufferedImage. cols rows BufferedImage/TYPE_BYTE_GRAY)
+                [^double _min ^double _max] (if (and max min)
+                                              [(double min) (double max)]
+                                              (pct.common/min-max-doubles data))
+                _r ^double (- _max _min)]
+            (when-not (= _r 0.0)
+              (dotimes [i len]
+                (aset data i (double (Math/round (* (/ (- (aget data i) _min) _r) 255))))))
+            (.setPixels ^WritableRaster (.getRaster image) 0 0 (long cols) (long rows) data)
+            (ImageIO/write image "png" im-file))))))
+
+
+(defn save-recon-opts [recon-opts folder & {:keys [name]}]
+  (with-open [f (clojure.java.io/writer (format "%s/%s" folder (or name "recon_config.json")))]
+    (let [recon-opts (-> recon-opts
+                         (#(if (:date %)     % (assoc % :date     (pct.util.system/get-timestamp))))
+                         (#(if (:hostname %) % (assoc % :hostname (pct.util.system/hostname)))))]
+      (.write f (generate-string recon-opts
+                                 {:pretty true
+                                  :key-fn #(if (keyword? %) (name %) (str %))})))))
+
+
+(defn load-recon-opts
+  [folder & {:keys [name]}]
+  (let [recon-file (java.io.File. (format "%s/%s" folder (or name "recon_config.json")))]
+    (when (and (.exists recon-file) (.isFile recon-file))
+      (parse-string (slurp (.getPath recon-file))
+                    #(if (re-matches #"\d+" %)
+                       (java.lang.Long/parseLong %)
+                       (keyword %))))))
+
+
+(defn save-series
+  "Save series, as well as recon parameters if given"
+  ([^RealBlockVector x  rows  cols slices]
+   (save-series x rows cols slices {}))
+  ([^RealBlockVector x  rows  cols slices recon-opts]
+   (save-series x rows cols slices recon-opts {:type :txt}))
+  ([^RealBlockVector x  rows  cols slices recon-opts opts]
+   (let [timestamp (pct.util.system/get-timestamp)
+         hostname  (pct.util.system/hostname)
+         slice-offset (* (long rows) (long cols))
+         output_type (or (:type opts) :txt)
+         iter (if-let [iter (:iterations recon-opts)] (long iter) 0)
+         folder (format "%s/%s"
+                        (if-let [folder (:folder opts)] folder ".")
+                        (format "%s_%s" hostname timestamp))]
+     (.mkdir (java.io.File. folder))
+     ;; write recon-opts
+     (save-recon-opts recon-opts folder)
+     #_(with-open [f (clojure.java.io/writer (format "%s/%s" folder "recon_config.json"))]
+         (let [recon-opts (-> recon-opts
+                              (#(if (:date %)     % (assoc % :date     timestamp)))
+                              (#(if (:hostname %) % (assoc % :hostname (pct.util.system/hostname)))))]
+           (.write f (generate-string recon-opts
+                                      {:pretty true
+                                       :key-fn (fn [k] (if (keyword? k)
+                                                        (name k)
+                                                        (str k)))}))))
+     (case output_type
+       :txt (do (dotimes [i slices]
+                  (save-x-txt (subvector x (* i slice-offset) slice-offset) rows cols (format "x_%d_%d" iter i) :folder folder))
+                true)
+       :img (do (dotimes [i slices]
+                  (save-x-img (subvector x (* i slice-offset) slice-offset) rows cols (format "x_%d_%d" iter i) :folder folder))
+                true)
+       :all (do (dotimes [i slices]
+                  (let [name (format "x_%d_%d" iter i)]
+                    (save-x-txt (subvector x (* i slice-offset) slice-offset) rows cols name :folder folder)
+                    (save-x-img (subvector x (* i slice-offset) slice-offset) rows cols name :folder folder)))
+                true)
+       (let [msg (format "Unknown type: %s. Nothing to do here." (str output_type))]
+         (println msg)
+         (timbre/info msg))))))
 
 (comment
-  ;; read config
+  ;; read config using clojure.data
   (json/read-str (slurp "test_confi.txt") :key-fn #(if (re-matches #"\d+" %)
                                                      (java.lang.Long/parseLong %)
                                                      (keyword %)))
+
+  ;; read config using cheshire.core
   (parse-string (slurp "test_config.txt") (fn [k] (if (re-matches #"\d+" k)
                                                    (java.lang.Long/parseLong k)
                                                    (keyword k))))
-  ;; write config
+  ;; write config using cheshire.core
   (with-open [f (clojure.java.io/writer "test_config.txt")]
     (.write f (generate-string {:tvs? true
                                 :iterations 6
@@ -411,60 +563,51 @@
                                          (name k)
                                          (str k)))}))))
 
-(defn save-series-txt [^doubles x & {:keys [rows cols range]}]
-  {:pre [(int? rows) (int? cols)]}
-  (let [slice-offset (long (* ^int rows ^int cols))
-        [^long _s ^long _e] range
-        last-idx (unchecked-dec (long (/ (alength x) slice-offset)))
-        start    (int (or _s 0))
-        end      (int (min (long (or _e last-idx)) last-idx))]
-    (loop [slice-idx start])))
+;; (defn save-series [x prefix & {:keys [rows cols ext binary filename]
+;;                                :or   {rows 200 cols 200 ext "txt" binary false}}]
+;;   (let [length (* ^long rows ^long cols)
+;;         len ^long (dim x)]
+;;     (if binary
+;;       ;; Write image as a binary file
+;;       ;; start with rows, cols, slices stored as integer, machine format
+;;       ;; followed by x, stored as double array machine format
+;;       (let [slices (/ len length)
+;;             fname (format "%s/%s" prefix (or filename "x.bin"))
+;;             file ^File (java.io.File. fname)]
+;;         (when-let [d ^File (.getParentFile file)]
+;;           (.mkdirs d))
+;;         (with-open [os (clojure.java.io/output-stream fname)]
+;;           (let [rows-buff   (ByteBuffer/allocate 4)
+;;                 cols-buff   (ByteBuffer/allocate 4)
+;;                 slices-buff (ByteBuffer/allocate 4)
+;;                 dbuff       (ByteBuffer/allocate (* len 8))]
+;;             (-> (.order rows-buff ByteOrder/LITTLE_ENDIAN)
+;;                 .asIntBuffer
+;;                 (.put ^int rows))
+;;             (-> (.order cols-buff ByteOrder/LITTLE_ENDIAN)
+;;                 .asIntBuffer
+;;                 (.put ^int cols))
+;;             (-> (.order slices-buff ByteOrder/LITTLE_ENDIAN)
+;;                 .asIntBuffer
+;;                 (.put ^int slices))
+;;             (.write os (.array rows-buff))
+;;             (.write os (.array cols-buff))
+;;             (.write os (.array slices-buff))
+;;             (let [buf ^DoubleBuffer (-> (.order dbuff ByteOrder/LITTLE_ENDIAN)
+;;                                         .asDoubleBuffer)]
+;;               (loop [i (long 0)]
+;;                 (if (< i len)
+;;                   (do (.put buf i (x i))
+;;                       (recur (inc i)))
+;;                   (.write os (.array dbuff))))))))
+;;       ;; Write each slice as text image
+;;       (loop [offset (int 0)
+;;              i (int 0)]
+;;         (when (< offset len)
+;;           (save-x (subvector x offset length) prefix :id i :rows rows :cols cols :ext ext)
+;;           (recur (unchecked-add-int offset length) (unchecked-inc-int i)))))))
 
-(defn save-series-png [])
 
-(defn save-series [x prefix & {:keys [rows cols ext binary filename]
-                               :or   {rows 200 cols 200 ext "txt" binary false}}]
-  (let [length (* ^long rows ^long cols)
-        len ^long (dim x)]
-    (if binary
-      ;; Write image as a binary file
-      ;; start with rows, cols, slices stored as integer, machine format
-      ;; followed by x, stored as double array machine format
-      (let [slices (/ len length)
-            fname (format "%s/%s" prefix (or filename "x.bin"))
-            file ^File (java.io.File. fname)]
-        (when-let [d ^File (.getParentFile file)]
-          (.mkdirs d))
-        (with-open [os (clojure.java.io/output-stream fname)]
-          (let [rows-buff   (ByteBuffer/allocate 4)
-                cols-buff   (ByteBuffer/allocate 4)
-                slices-buff (ByteBuffer/allocate 4)
-                dbuff       (ByteBuffer/allocate (* len 8))]
-            (-> (.order rows-buff ByteOrder/LITTLE_ENDIAN)
-                .asIntBuffer
-                (.put ^int rows))
-            (-> (.order cols-buff ByteOrder/LITTLE_ENDIAN)
-                .asIntBuffer
-                (.put ^int cols))
-            (-> (.order slices-buff ByteOrder/LITTLE_ENDIAN)
-                .asIntBuffer
-                (.put ^int slices))
-            (.write os (.array rows-buff))
-            (.write os (.array cols-buff))
-            (.write os (.array slices-buff))
-            (let [buf ^DoubleBuffer (-> (.order dbuff ByteOrder/LITTLE_ENDIAN)
-                                        .asDoubleBuffer)]
-              (loop [i (long 0)]
-                (if (< i len)
-                  (do (.put buf i (x i))
-                      (recur (inc i)))
-                  (.write os (.array dbuff))))))))
-      ;; Write each slice as text image
-      (loop [offset (int 0)
-             i (int 0)]
-        (when (< offset len)
-          (save-x (subvector x offset length) prefix :id i :rows rows :cols cols :ext ext)
-          (recur (unchecked-add-int offset length) (unchecked-inc-int i)))))))
 
 (defn createResultFolder ^java.lang.String []
   (loop [folder ^java.io.File (java.io.File. (format "results/%s" (pct.util.system/get-timestamp)))]
@@ -473,23 +616,20 @@
       (do (.mkdirs folder)
           (.toString folder)))))
 
-(defn load-config [^String path]
-  (parse-string (slurp path) (fn [k] (if (re-matches #"\d+" k)
-                                      (java.lang.Long/parseLong k)
-                                      (keyword k)))))
 
-(defn save-series2 [x config]
-  (let [folder (createResultFolder)
-        iter (or (:iterations config) 0)
-        {:keys [rows cols slices]} config]
-    (assert (or (nil? rows) (nil? cols) (nil? slices)))
-    (with-open [f (clojure.java.io/writer (format "%s/config.txt" folder))]
-      (.write f (generate-string config {:pretty true
-                                         :key-fn (fn [k] (if (keyword? k) (name k) (str k)))}))
-      )))
+;; (defn save-series2 [x config]
+;;   (let [folder (createResultFolder)
+;;         iter (or (:iterations config) 0)
+;;         {:keys [rows cols slices]} config]
+;;     (assert (or (nil? rows) (nil? cols) (nil? slices)))
+;;     (with-open [f (clojure.java.io/writer (format "%s/config.txt" folder))]
+;;       (.write f (generate-string config {:pretty true
+;;                                          :key-fn (fn [k] (if (keyword? k) (name k) (str k)))}))
+;;       )))
 
 
-(defn load-data-sample [f]
+(defn load-data-sample
+  [f]
   (with-open [scanner ^Scanner (Scanner. (clojure.java.io/as-file f))]
     (let [id ^long (java.lang.Long/parseLong (.nextLine scanner))
           acc ^ArrayList (ArrayList.)]
@@ -506,44 +646,285 @@
                 (recur (unchecked-inc i)))
             [id arr]))))))
 
+
 #_(defn dumpToMatlab [file x history lambda]
   (let [f (if (instance? java.io.File file ))]))
+
+
+(defn ProtonHistory->fromStream
+  "Read the path and b data from two seperate files provided by Paniz, each one contains everything.
+   MLP-stream : BufferedInputStream for MLP path file
+   WEPL-stream : BufferedInputstream for WEPL file, if provided; otherwise, WEPL data is provided by MLP path file
+
+   Return a ProtonHistory"
+  (^ProtonHistory [^long id ^java.io.BufferedInputStream MLP-stream]
+   (when-let [^int length (read-int MLP-stream __ENDIAN__ __int_buffer__)]
+     (when (> length __max_intersections__)
+       (throw (Exception. (format "Error: length (%d) > __max_intersections__ (%d)." length __max_intersections__))))
+     (let [ ;; path-buf ^bytes (byte-array (* 4 length))
+           path-arr ^ints  (int-array length)]
+       (when-not (= (.read MLP-stream __path_buffer__ 0 (* 4 length)) -1)
+         (-> (ByteBuffer/wrap ^bytes __path_buffer__)
+             (.order __ENDIAN__)
+             .asIntBuffer
+             (.get path-arr 0 length))
+         (let [^double chord-len (read-double MLP-stream __ENDIAN__ __double_buffer__)
+               ^float  wepl      (read-float  MLP-stream __ENDIAN__ __float_buffer__)
+               ^float  entry-xy  (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
+               ^float  entry-xz  (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
+               ^float  exit-xy   (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
+               ^float  exit-xz   (read-float  MLP-stream __ENDIAN__ __float_buffer__)]
+           (ProtonHistory. id path-arr chord-len wepl entry-xy entry-xz exit-xy exit-xz
+                           (new HashMap)))))))
+  (^ProtonHistory [^long id ^java.io.BufferedInputStream MLP-stream ^java.io.BufferedInputStream WEPL-stream]
+   (when-let [^int length (read-int MLP-stream __ENDIAN__ __int_buffer__)]
+     (when (> length __max_intersections__)
+       (throw (Exception. (format "Error: length (%d) > __max_intersections__ (%d)." length __max_intersections__))))
+     (let [ ;; path-buf ^bytes (byte-array (* 4 length))
+           path-arr ^ints  (int-array length)]
+       (when-not (= (.read MLP-stream __path_buffer__ 0 (* 4 length)) -1)
+         (-> (ByteBuffer/wrap ^bytes __path_buffer__)
+             (.order __ENDIAN__)
+             .asIntBuffer
+             (.get path-arr 0 length))
+         (let [^double chord-len (read-double MLP-stream __ENDIAN__ __double_buffer__)
+               ^float  wepl      (read-float WEPL-stream __ENDIAN__ __float_buffer__)
+               ^float  entry-xy  (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
+               ^float  entry-xz  (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
+               ^float  exit-xy   (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
+               ^float  exit-xz   (read-float  MLP-stream __ENDIAN__ __float_buffer__ )]
+           (ProtonHistory. id path-arr chord-len wepl entry-xy entry-xz exit-xy exit-xz
+                           (new HashMap))))))))
+
+
 (defprotocol IPCTDataset
   (size   [this]  "return a vector of [rows cols slices]")
   (files  [this] "get data file paths")
-  (slice-offset [this] "get length of each slice"))
+  (slice-offset [this] "get length of each slice")
 
-(deftype PCTDataset [^long rows ^long cols ^long slices ^java.lang.String path-file ^java.lang.String b-file
+  ;; ;; from IHistoryInput
+  ;; (skip* [this n]   "skip n data")
+  ;; (next* [this] [this n] [this n out-ch]
+  ;;   "read next data, if n is given will read the next n data to acc.
+  ;;    If acc could be either a container or a channel")
+  (rest* [this] [this out-ch] [this out-ch batch] "read the remaining data to out channel")
+  (reset* [this]    "reset position")
+  (read-ProtonHistory [this] [this out-ch] [this out-ch batch] "read data from file as ProtonHistory directly")
+  (length* [this] )
+  (count-test [this] [this m]))
+
+
+(deftype PCTDataset [^long rows ^long cols ^long slices ^long history-count
+                     ^java.lang.String MLP-file ^java.lang.String WEPL-file
+                     ^{:unsynchronized-mutable true :tag java.io.BufferedInputStream} MLP-stream
+                     ^{:unsynchronized-mutable true :tag java.io.BufferedInputStream} WEPL-stream
+                     ^{:unsynchronized-mutable true :tag long} index
                      ^HashMap samples
-                     ^RealBlockVector x0 ^pct.data.HistoryInputStream in-stream
-                     format]
+                     ^RealBlockVector x0]
   IPCTDataset
+  ;; (skip* [this k]
+  ;;   (let [last-idx (+ index ^long k)]
+  ;;     (if WEPL-stream
+  ;;       (loop [i index]
+  ;;         (if (< i last-idx)
+  ;;           (when-let [b (HistoryBuffer->fromStream i MLP-stream WEPL-stream)]
+  ;;             (recur (unchecked-inc i)))
+  ;;           (set! index i)))
+  ;;       (loop [i index]
+  ;;         (if (< i last-idx)
+  ;;           (when-let [b (HistoryBuffer->fromStream i MLP-stream WEPL-stream)]
+  ;;             (recur (unchecked-inc i)))
+  ;;           (set! index i))))
+  ;;     this))
+
+  ;; (next* [this]
+  ;;   (when open?
+  ;;     (let [s (HistoryBuffer->fromStream index MLP-stream WEPL-stream)]
+  ;;       (set! index (inc index))
+  ;;       s)))
+
+  ;; (next* [this n]
+  ;;   (let [acc ^ArrayList (ArrayList. (int n))
+  ;;         last-idx (+ index ^long n)]
+  ;;     (loop [i index]
+  ;;       (if (< i last-idx)
+  ;;         (when-let [b (HistoryBuffer->fromStream i MLP-stream WEPL-stream)]
+  ;;           (.add acc b)
+  ;;           (recur (inc i)))
+  ;;         (set! index i)))
+  ;;     acc))
+
+  ;; (next* [this n out-ch]
+  ;;   (let [last-idx (+ index ^long n)]
+  ;;     (loop [i index]
+  ;;       (if (< i last-idx)
+  ;;         (when-let [b (HistoryBuffer->fromStream i MLP-stream WEPL-stream)]
+  ;;           (>!! out-ch b)
+  ;;           (recur (inc i)))
+  ;;         (set! index i))))
+  ;;   (a/close! out-ch))
+
+  (rest* [this out-ch] ;; read
+    (loop []
+      (when-let [b (if WEPL-stream
+                     (ProtonHistory->fromStream index MLP-stream WEPL-stream)
+                     (ProtonHistory->fromStream index MLP-stream))]
+        (set! index (inc index))
+        (>!! out-ch b)
+        (recur)))
+    (a/close! out-ch))
+
+  (rest* [this out-ch batch-size]
+    ;; read in data as Historybuffer
+    (let [batch-size ^long batch-size]
+      (loop [acc ^objects (object-array batch-size)
+             i   ^long    (long 0)
+             c index]
+        (if-let [b (if WEPL-stream
+                     (ProtonHistory->fromStream c MLP-stream WEPL-stream)
+                     (ProtonHistory->fromStream c MLP-stream))]
+          (do (if (< i batch-size)
+                (do (aset acc i b)
+                    (recur acc (unchecked-inc i) (unchecked-inc c)))
+                (let [new-acc ^objects (object-array batch-size)]
+                  (>!! out-ch [i acc])
+                  (aset new-acc 0 b)
+                  (recur new-acc (long 1) (unchecked-inc c)))))
+          (do (>!! out-ch [i acc])
+              (set! index c))))
+      (a/close! out-ch)))
+
+  (read-ProtonHistory [this]
+    (if-let [^ProtonHistory s (if WEPL-stream
+                                (ProtonHistory->fromStream index MLP-stream WEPL-stream)
+                                (ProtonHistory->fromStream index MLP-stream))]
+      (do (set! index (inc index))
+          s)))
+
+  (read-ProtonHistory [this out-ch]
+    (loop []
+      (when-let [^ProtonHistory b (if WEPL-stream
+                                    (ProtonHistory->fromStream index MLP-stream WEPL-stream)
+                                    (ProtonHistory->fromStream index MLP-stream))]
+        (set! index (inc index))
+        (>!! out-ch b)
+        (recur)))
+    (a/close! out-ch))
+
+  (read-ProtonHistory [this out-ch batch-size]
+    ;; read in data as ProtonHistory
+    (let [batch-size ^long batch-size]
+      (loop [acc ^objects (object-array batch-size)
+             len ^long    (long 0)
+             id  ^long    (long 0)]
+        (if-let [^ProtonHistory b (if WEPL-stream
+                                    (ProtonHistory->fromStream id MLP-stream WEPL-stream)
+                                    (ProtonHistory->fromStream id MLP-stream))]
+          (if (< len batch-size)
+            (do (aset acc len b)
+                (recur acc (unchecked-inc len) (unchecked-inc id)))
+            (let [new-acc ^objects (object-array batch-size)]
+              (>!! out-ch [len acc])
+              (aset new-acc 0 b)
+              (recur new-acc (long 1) (unchecked-inc id))))
+          (do (>!! out-ch [len acc]))))
+      (.close this)
+      (a/close! out-ch)))
+
+  (count-test [this]
+    (loop [i ^long (long 0)]
+      (if-let [b (if WEPL-stream
+                   (ProtonHistory->fromStream i MLP-stream WEPL-stream)
+                   (ProtonHistory->fromStream i MLP-stream))]
+        (recur (unchecked-inc i))
+        i)))
+
+  (count-test [this m]
+    (let [n (.size ^HashMap m)
+          res ^HashMap (HashMap.)]
+      (loop [i          ^long (long 0)
+             test-count ^long (long 0)]
+        (if (< test-count n)
+          (if-let [^ProtonHistory b (if WEPL-stream
+                                      (ProtonHistory->fromStream i MLP-stream WEPL-stream)
+                                      (ProtonHistory->fromStream i MLP-stream))]
+            (do (if-let [arr ^ints (.get ^HashMap m i)]
+                  (do (if (Arrays/equals arr ^ints (.path b))
+                        (.put res i true)
+                        (.put res i {:path (.path b) :sample arr}))
+                      (recur (unchecked-inc i) (unchecked-inc test-count)))
+                  (recur (unchecked-inc i) test-count))))
+          res))))
+
+  (length* [_] history-count)
+
+
+  ;; clojure.lang.Seqable
+  ;; (seq [this]
+  ;;   (sseq this next*))
+
+  ;; -------------------------------
+
   (size  [_]  [rows cols slices])
-  (files [_] {:path-file  path-file
-              :b-file     b-file})
+  (files [_] {:MLP-file  MLP-file
+              :WEPL-file WEPL-file})
+
   (slice-offset [_] (* rows cols))
 
   clojure.lang.Counted
-  (count [_] (count in-stream))
+  (count [_] history-count)
+
+  pct.data.ICloseable
+  (close* [this]
+    (.close this))
 
   java.lang.AutoCloseable
   (close [_]
-    (timbre/info "closing in-stream in PCTDataset")
-    (.close in-stream)))
+    (timbre/info "closing streams in PCTDataset")
+    (.close MLP-stream)
+    (when WEPL-file
+      (.close WEPL-stream))))
+
 
 (defn test-dataset [^PCTDataset dataset]
-  (pct.data/count-test (.in-stream dataset) (.samples dataset)))
+  (count-test dataset (.samples dataset)))
 
-(defn newPCTDataset [{:keys [rows :rows cols :cols slices :slices dir :dir path :path b :b fmt :fmt] :as input}]
-  (let [path-file (format "%s/%s" dir path)
-        b-file (when (= fmt :old) (format "%s/%s" dir b))]
+
+(defn newPCTDataset
+  ([^String folder ^String MLP-file]
+   (newPCTDataset MLP-file nil))
+  ([^String folder ^String MLP-file ^String WEPL-file]
+   (let [[^long rows ^long cols ^long slices] (dataset-dimension folder #"x_0_\d+\.txt")]
+     (let [MLP-stream (BufferedInputStream. (FileInputStream. MLP-file))
+           history-count (read-header MLP-stream)
+           WEPL-stream (if WEPL-file
+                         (BufferedInputStream. (FileInputStream. WEPL-file)))]
+       (when WEPL-stream
+         (assert (= (read-header MLP-stream) history-count)))
+       (let [samples ^HashMap (HashMap.)]
+         (loop [i (long 0)]
+           (let [f ^java.io.File (clojure.java.io/file (format "%s/path_%d.txt" folder i))]
+             (when (.isFile f)
+               (let [[id data] (load-data-sample f)]
+                 (.put samples id data)
+                 (recur (unchecked-inc i))))))
+         (->PCTDataset rows cols slices history-count
+                       MLP-file WEPL-file MLP-stream WEPL-stream
+                       (long 0)
+                       samples
+                       (load-series folder #"x_0_(\d+)\.txt" {:rows rows :cols cols :slices slices})))))))
+
+
+#_(defn newPCTDataset [{:keys [rows :rows cols :cols slices :slices dir :dir path :path b :b fmt :fmt] :as input}]
+  (let [MLP-file (format "%s/%s" dir path)
+        WEPL-file (when (= fmt :old) (format "%s/%s" dir b))]
     ;; (println input)
     #_(map->PCTDataset {:rows rows :cols cols :slices slices
-                      :path-file path-file
-                      :b-file b-file
-                      :in-stream (pct.data/newHistoryInputStream path-file b-file)
-                      :x0 (pct.data.io/load-series (format "%s/x" dir)
-                                                   :rows rows :cols cols :slices slices :ext "txt" :iter 0)})
+                        :MLP-file MLP-file
+                        :WEPL-file WEPL-file
+                        :in-stream (pct.data/newHistoryInputStream MLP-file WEPL-file)
+                        :x0 (pct.data.io/load-series (format "%s/x" dir)
+                                                     :rows rows :cols cols :slices slices :ext "txt" :iter 0)})
     (try
       (let [samples ^HashMap (HashMap.)]
         (loop [i (long 0)]
@@ -552,20 +933,20 @@
               (let [[id data] (load-data-sample f)]
                 (.put samples id data)
                 (recur (unchecked-inc i))))))
-        (->PCTDataset rows cols slices path-file b-file
+        (->PCTDataset rows cols slices MLP-file WEPL-file
                       samples
-                      (pct.data.io/load-series (format "%s/x" dir)
-                                               :rows rows :cols cols :slices slices :ext "txt" :iter 0)
-                      (if b-file
-                        (pct.data/newHistoryInputStream path-file b-file)
-                        (pct.data/newHistoryInputStream path-file))
+                      (load-series dir #"x_0_(\d+)\.txt")
+                      (if WEPL-file
+                        (pct.data/newHistoryInputStream MLP-file WEPL-file)
+                        (pct.data/newHistoryInputStream MLP-file))
                       fmt))
       (catch java.io.FileNotFoundException ex
         (timbre/error ex "File is not found." (.getName (Thread/currentThread)))
         (throw ex)))))
 
 
-(defn load-dataset ^pct.data.HistoryIndex [^PCTDataset dataset opts]
+(defn load-dataset
+  ^pct.data.HistoryIndex [^PCTDataset dataset opts]
   {:pre []
    :post [(= (reduce + (spr/transform spr/ALL (fn [[[data _] & _]] (count data)) (seq %)))
              (count %))
@@ -590,7 +971,7 @@
                         (let [acc (new HashMap)]
                           (loop [i (long 0)]
                             (if (< i len)
-                              (let [data ^pct.data.PathData (aget batch i)]
+                              (let [data ^pct.data.ProtonHistory (aget batch i)]
                                 (when (>= (count data) min-len)
                                   (let [[^int b ^int e] (pct.common/min-max-ints ^ints (.path data))
                                         start-idx ^long (long (quot b ^long offset))
@@ -624,7 +1005,8 @@
                       in-ch))
           res (try (pct.common/with-out-str-data-map
                      (time (do (timbre/info "Start indexing ....")
-                               (pct.data/read-PathData (.in-stream dataset) in-ch batch-size)
+                               #_(pct.data/read-ProtonHistory (.in-stream dataset) in-ch batch-size)
+                               (read-ProtonHistory dataset in-ch batch-size)
                                (let [index (a/<!! res-ch)]
                                  (timbre/info "Finished making index." )
                                  index))))
@@ -655,7 +1037,7 @@
           (let [res-ch (pct.async.threads/asyncWorkers
                         jobs
                         (fn [[^long len ^objects data-arr]]
-                          ;; processing bulk HistoryBuffer into PathData
+                          ;; processing bulk HistoryBuffer into ProtonHistory
                           len)
                         (fn
                           ([] (long 0))
@@ -665,7 +1047,7 @@
                         in-ch)
                 res (try (pct.common/with-out-str-data-map
                            (time (do (timbre/info "Start indexing ....")
-                                     (pct.data/rest* (.in-stream dataset) in-ch batch-size)
+                                     (rest* dataset in-ch batch-size)
                                      (let [index (a/<!! res-ch)]
                                        (timbre/info "Finished making index." )
                                        index))))
@@ -676,7 +1058,7 @@
             (timbre/info (clojure.string/replace (:str res) #"[\n\"]" ""))
             (:ans res)))
         (try (let [res (pct.common/with-out-str-data-map
-                         (time (pct.data/count-test (.in-stream dataset))))]
+                         (time (count-test dataset)))]
                (timbre/info (clojure.string/replace (:str res) #"[\n\"]" ""))
                (:ans res))
              (catch Exception ex

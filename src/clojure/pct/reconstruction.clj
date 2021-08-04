@@ -39,7 +39,7 @@
         (loop [i (long 0)
                acc (double 0.0)]
           (if (< i len)
-            (let [h ^pct.data.PathData (.get histories i)]
+            (let [h ^pct.data.ProtonHistory (.get histories i)]
               (recur (unchecked-inc i) (+ (.chord-len h) acc)))
             acc)))))
    (with-out-str-data-map
@@ -47,7 +47,7 @@
       (let [it (clojure.lang.RT/iter histories)]
         (loop [acc (double 0.0)]
           (if (.hasNext it)
-            (let [h ^pct.data.PathData (.next it)]
+            (let [h ^pct.data.ProtonHistory (.next it)]
               (recur (+ (.chord-len h) acc)))
             acc)))))])
 
@@ -67,7 +67,7 @@
                  x x0]
             (if (< i len)
               (recur (unchecked-inc i)
-                     (pct.data/proj_art-1* ^pct.data.PathData (.get histories i) x lambda))
+                     (pct.data/proj_art-1* ^pct.data.ProtonHistory (.get histories i) x lambda))
               x)))))
      (with-out-str-data-map
        (time
@@ -76,7 +76,7 @@
                  x x1]
             (if (< i len)
               (recur (unchecked-inc i)
-                     (pct.data/proj_art-2* ^pct.data.PathData (.get histories i) x lambda))
+                     (pct.data/proj_art-2* ^pct.data.ProtonHistory (.get histories i) x lambda))
               x)))))
      (with-out-str-data-map
        (time
@@ -85,7 +85,7 @@
                  x x2]
             (if (< i len)
               (recur (unchecked-inc i)
-                     (pct.data/proj_art-3* ^pct.data.PathData (.get histories i) x lambda))
+                     (pct.data/proj_art-3* ^pct.data.ProtonHistory (.get histories i) x lambda))
               x)))))
      (with-out-str-data-map
          (time
@@ -94,14 +94,14 @@
                    x x-arr]
               (if (< i len)
                 (recur (unchecked-inc i)
-                       (pct.data/proj_art-4* ^pct.data.PathData (.get histories i) x lambda))
+                       (pct.data/proj_art-4* ^pct.data.ProtonHistory (.get histories i) x lambda))
                 x)))))
      #_(with-out-str-data-map
          (time
           (let [len (.size histories)]
             (loop [i (long 0)]
               (if (< i len)
-                (let [h ^pct.data.PathData (.get histories i)
+                (let [h ^pct.data.ProtonHistory (.get histories i)
                       path ^ints (.path h)
                       n ^int (alength path)
                       a ^double (* lambda (/ (- (.energy h) ^double (pct.data/dot* h x))
@@ -127,7 +127,7 @@
              x x-arr]
         (if (< i len)
           (recur (unchecked-inc i)
-                 (pct.data/proj_art-4* ^pct.data.PathData (.get histories i) x lambda))
+                 (pct.data/proj_art-4* ^pct.data.ProtonHistory (.get histories i) x lambda))
           x)))))
 
 
@@ -217,7 +217,7 @@
                                        (pct.tvs/ntvs-slice local-x [rows cols] ell :alpha alpha :N tvs-N :in-place true)
                                        local-x)]
                   (dotimes [i h-size]
-                    (pct.data/proj_art-5* ^pct.data.PathData (aget ^objects shuffled-data i) local-x lambda))
+                    (pct.data/proj_art-5* ^pct.data.ProtonHistory (aget ^objects shuffled-data i) local-x lambda))
                   #_(a/>!! out [key local-x])
                   (a/>!! out [key (Arrays/copyOf ^doubles local-x data-len)])
                   (timbre/info (format "%s%s, (%d) : data sent." _normal_ thread-name iter))
@@ -250,7 +250,10 @@
                                        local-x)]
                 (timbre/info (format "%s%s, (%d) : done. Sending out local-x" _term_ thread-name iter))
                 (a/>!! res [key [local-x (:global-offset node)]])
-                (a/>!! res [:end]))))))
+                (a/>!! res [:end])
+                (a/put! out [:end])
+                (let [[k & _] (a/<!! in)]
+                  (timbre/info (format "%s%s, :end" _term_ thread-name))))))))
 
       (= type :body)
       (a/thread
@@ -280,13 +283,24 @@
                     (loop [remaining (into #{} (keys offset-lut))]
                       (if (empty? remaining)
                         (do (dotimes [i h-size]
-                              (pct.data/proj_art-5* ^pct.data.PathData (aget ^objects shuffled-data i) local-x lambda))
+                              (pct.data/proj_art-5* ^pct.data.ProtonHistory (aget ^objects shuffled-data i) local-x lambda))
                             #_(a/>!! out [key local-x])
                             (a/>!! out [key (Arrays/copyOf local-x data-len)])
                             (timbre/info (format "%s%s, (%d) : data sent." _normal_ thread-name iter))
                             true)
-                        (if-let [[^clojure.lang.Keyword k ^doubles v] (a/<!! in)]
-                          (if-let [[^long offset-v ^long length ^long offset-local] (k offset-lut)]
+                        (let [[^clojure.lang.Keyword k ^doubles v] (a/<!! in)]
+                          (cond
+                            (nil? k)
+                            (do (timbre/info (format "%s%s, (%d) : incoming channel is closed."
+                                                     _term_ thread-name iter))
+                                nil)
+
+                            (= k :end)
+                            (do (timbre/info (format "%s%s, (:end %d) : finished." _term_ thread-name iter))
+                                (a/>!! out [:end]))
+
+                            :else
+                            (if-let [[^long offset-v ^long length ^long offset-local] (k offset-lut)]
                             (do (timbre/info (format "%s%s, (%d) : received data from %s" _normal_ thread-name iter k))
                                 (System/arraycopy v       (* offset-v     slice-offset)
                                                   local-x (* offset-local slice-offset)
@@ -294,10 +308,7 @@
                                 (recur (disj remaining k)))
                             (do (timbre/info (format "%s%s, (%d) : could not find key %s, skip."
                                                      _warning_ thread-name iter k))
-                                (recur remaining)))
-                          (do (timbre/info (format "%s%s, (%d) : incoming channel is closed."
-                                                   _term_ thread-name iter))
-                              nil))))]
+                                (recur remaining)))))))]
                 (if continue?
                   (recur (unchecked-inc iter))
                   (do (timbre/info (format "%s%s, (%d) : stopped, recon incomplete." _term_ thread-name iter)))))
@@ -332,8 +343,7 @@
         (let [n (count msg)]
           (if (= n 2)
             (let [[^doubles arr [^long global-offset ^long len _]] msg
-                  v (subvector final-x (* global-offset slice-offset) slice-offset)]
-              #_(println [k global-offset len slice-offset])
+                  v (subvector final-x (* global-offset slice-offset) (* len slice-offset))]
               (transfer! arr v)
               (recur))
             (do (println (format "Message format is wrong, expect n=2, got n=%d. Skip." n))
@@ -404,7 +414,7 @@
                         (pct.tvs/ntvs-slice local-x [rows cols] ell :alpha alpha :N tvs-N :in-place true)
                         local-x)]
           (dotimes [i h-size]
-            (pct.data/proj_art-5* ^pct.data.PathData (aget ^objects shuffled-data i) local-x lambda))
+            (pct.data/proj_art-5* ^pct.data.ProtonHistory (aget ^objects shuffled-data i) local-x lambda))
           (let [next-iter (unchecked-inc iter)
                 next-ell (+ (long (min ell iter)) (long (rand-int (Math/abs (- ell iter)))))]
             (recur next-iter next-ell
@@ -412,3 +422,50 @@
         (persistent! (assoc! acc :final (if tvs?
                                           (pct.tvs/ntvs-slice local-x [rows cols] ell :alpha alpha :N tvs-N :in-place true)
                                           local-x)))))))
+
+
+(defn seq-art [^pct.async.node.AsyncGrid grid ^pct.data.HistoryIndex global-index ^RealBlockVector init-x opts]
+  (timbre/info "seq-art start")
+  (let [histories ^ArrayList (reduce (fn [^ArrayList acc node]
+                                       (let [s (:slices node)]
+                                         #_[(first s) (count s)]
+                                         (.addAll acc (first (global-index (first s) (count s))))
+                                         acc))
+                                     (ArrayList.)
+                                     (seq grid))
+        h-size (.size histories)
+        step ^long (find-prime-step h-size)
+        shuffled-data (let [arr (object-array h-size)]
+                              (when (< 0 h-size)
+                                (Collections/sort histories)
+                                (loop [j (long 0), i step]
+                                  (if (= i 0)
+                                    (aset arr j (.get histories 0))
+                                    (do (aset arr j (.get histories i))
+                                        (recur (unchecked-inc j) (long (mod (+ i step) h-size)))))))
+                              arr)
+        iterations (long (or (:iterations opts) 3))
+        lambda (-> opts :lambda)
+        tvs?   (:tvs? opts)
+        rows   (.rows global-index)
+        cols   (.cols global-index)
+        alpha  (double (or (:alpha opts) 0.75))
+        tvs-N  (long (or (:tvs-N opts) 5))
+        data-len (dim init-x)
+        local-x ^doubles (transfer! init-x (double-array data-len))]
+    (timbre/info (format "start sequential art recon: history size = %d, shuffle step = %d, iteration = %d, lambda = %f"
+                         h-size step iterations lambda) )
+    (loop [iter (long 0)
+           ell  (long 0)]
+      (if (< iter iterations)
+        (let [local-x ^doubles (if tvs?
+                                 (pct.tvs/ntvs-slice local-x [rows cols] ell :alpha alpha :N tvs-N :in-place true)
+                                 local-x)]
+          (dotimes [i h-size]
+            (pct.data/proj_art-5* ^pct.data.ProtonHistory (aget ^objects shuffled-data i) local-x lambda))
+          (timbre/info (format "iterateion %d done." iter))
+          (recur (unchecked-inc iter)
+                 (+ (long (min ell iter)) (long (rand-int (Math/abs (- ell iter)))))))
+        local-x))))
+
+
