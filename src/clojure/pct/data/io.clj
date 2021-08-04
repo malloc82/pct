@@ -95,7 +95,7 @@
 (def ^{:private true :tag 'bytes} __double_buffer__ (byte-array 8))
 (def ^{:private true :tag 'long}  __header_length__ 32)
 (def ^{:private true :tag 'int}   __max_intersections__ (int 1280)) ;; according to pCT_reconstruction code base
-(def ^{:private true :tag 'ints}  __path_buffer__   (byte-array (* 4 __max_intersections__))) ;; 1280 is the max intersections
+(def ^{:private true :tag 'bytes}     __path_buffer__   (byte-array (* 4 __max_intersections__))) ;; 1280 is the max intersections
 (def ^{:private true :tag 'ByteOrder} __ENDIAN__ ByteOrder/LITTLE_ENDIAN)
 (def ^{:private true :tag 'long}  __IO_buffer_size__ (long (* 16 1024 1024)))
 
@@ -115,7 +115,7 @@
                (.getInt))))))
 
 
-(defmacro read-ints
+#_(defmacro read-ints
   [is endian array]
   (let [buffer (gensym)
         arr    (gensym)]
@@ -128,6 +128,35 @@
                  .asIntBuffer
                  (.get ~arr))
              ~arr)))))
+
+
+(defmacro read-ints
+  ([is endian array]
+   (let [buffer (gensym)
+         arr    (gensym)]
+     `(let [~(with-meta arr {:tag ints}) ~array
+            ~(with-meta buffer {:tag bytes}) (byte-array (* 4 (alength ~arr)))]
+        (if (= (.read ~is ~buffer) -1)
+          (throw (java.io.IOException. (format "Unexpected EOF when reading int-array with length=%d" (alength ~arr))))
+          (do (-> (ByteBuffer/wrap ~buffer)
+                  (.order ~endian)
+                  .asIntBuffer
+                  (.get ~arr))
+              ~arr)))))
+  ([is endian n buffer]
+   (let [arr (gensym)
+         len (gensym)
+         buf (gensym)]
+     `(let [~(with-meta len {:tag int})   ~n
+            ~(with-meta arr {:tag ints})  (int-array ~len)
+            ~(with-meta buf {:tag bytes}) ~buffer]
+        (if (= (.read ~is ~buf 0 (* 4 ~len)) -1)
+          (throw (java.io.IOException. (format "Unexpected EOF when reading int-array with length=%d" ~len)))
+          (do (-> (ByteBuffer/wrap ~buf)
+                  (.order ~endian)
+                  .asIntBuffer
+                  (.get ~arr 0 ~len))
+              ~arr))))))
 
 
 (defmacro read-long
@@ -147,7 +176,7 @@
 
 (defmacro read-float
   "Read an float from an input stream 'is'
-   If a byte buffer is provided, use thnnnnnnne given buffer, otherwise use a local created buffer"
+   If a byte buffer is provided, use the given buffer, otherwise use a local created buffer"
   ([is ^ByteOrder endian]
    (let [buffer (gensym)]
      `(let [~(with-meta buffer {:tag bytes}) (byte-array 4)]
@@ -676,6 +705,7 @@
                ^float  exit-xz   (read-float  MLP-stream __ENDIAN__ __float_buffer__)]
            (ProtonHistory. id path-arr chord-len wepl entry-xy entry-xz exit-xy exit-xz
                            (new HashMap)))))))
+
   (^ProtonHistory [^long id ^java.io.BufferedInputStream MLP-stream ^java.io.BufferedInputStream WEPL-stream]
    (when-let [^int length (read-int MLP-stream __ENDIAN__ __int_buffer__)]
      (when (> length __max_intersections__)
@@ -688,11 +718,11 @@
              .asIntBuffer
              (.get path-arr 0 length))
          (let [^double chord-len (read-double MLP-stream __ENDIAN__ __double_buffer__)
-               ^float  wepl      (read-float WEPL-stream __ENDIAN__ __float_buffer__)
                ^float  entry-xy  (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
                ^float  entry-xz  (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
                ^float  exit-xy   (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
-               ^float  exit-xz   (read-float  MLP-stream __ENDIAN__ __float_buffer__ )]
+               ^float  exit-xz   (read-float  MLP-stream __ENDIAN__ __float_buffer__ )
+               ^float  wepl      (read-float WEPL-stream __ENDIAN__ __float_buffer__)]
            (ProtonHistory. id path-arr chord-len wepl entry-xy entry-xz exit-xy exit-xz
                            (new HashMap))))))))
 
@@ -896,10 +926,13 @@
   ([^String folder ^String MLP-file ^String WEPL-file]
    (let [[^long rows ^long cols ^long slices] (dataset-dimension folder #"x_0_\d+\.txt")]
      (let [MLP-stream (BufferedInputStream. (FileInputStream. (format "%s/%s" folder MLP-file)) __IO_buffer_size__)
+           ;; MLP-stream (clojure.java.io/input-stream (format "%s/%s" folder MLP-file))
            history-count (read-header MLP-stream)
            _ (println "history-count = " history-count)
            WEPL-stream (if WEPL-file
-                         (BufferedInputStream. (FileInputStream. (format "%s/%s" folder WEPL-file)) __IO_buffer_size__))]
+                         (clojure.java.io/input-stream (format "%s/%s" folder WEPL-file))
+                         ;; (BufferedInputStream. (FileInputStream. (format "%s/%s" folder WEPL-file)) __IO_buffer_size__)
+                         nil)]
        (when WEPL-stream
          (assert (= (read-header WEPL-stream) history-count)))
        (let [samples ^HashMap (HashMap.)]

@@ -7,13 +7,13 @@ int main(int argc, char *argv[])
     const char * filename = "samples.bin";
     FILE * sample_file = fopen(filename, "w");
     fprintf(sample_file, "%d\n", 12345);
-    int a = 0x12345678;
+    int    a = 0x12345678;
     double b = 3.1415926535;
     float
         c = 0.1,
         d = 0.2,
         e = 0.3;
-    unsigned int buffer_size = sizeof(int) + sizeof(double) + sizeof(float) * 3;
+    unsigned int buffer_size = sizeof(int) + 20*sizeof(int) + sizeof(double) + sizeof(float) * 3;
     unsigned char * buffer = (unsigned char *)malloc(buffer_size);
     unsigned int offset = 0;
 
