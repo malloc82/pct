@@ -61,7 +61,10 @@
   (disconnect-all-upstreams [this]                   "disconnect from all the upstream nodes")
   (upstream-full?           [this]                   "test if upstream connection is saturated")
   (downstream-full?         [this]                   "test if downstream connection is saturated")
-  (get-connection-status    [this]                   "get current upstream & downstream connection info as a persistent data"))
+  (get-connection-status    [this]                   "get current upstream & downstream connection info as a persistent data")
+
+  (send-downstream          [this data]              "send data downstream")
+  (send-upstream            [this data]              "send data upstream"))
 
 
 (defprotocol IAsyncCommunication
@@ -78,25 +81,26 @@
 
 (defrecord NodeConnection [^TreeSet connected ^HashMap connection]
   IConnection
-  (add-node [this node-key slices]
-    (.addAll connected slices)
-    (.put connection node-key slices))
+  (add-node [this node-key chan+slices]
+    (let [[_ slices] chan+slices]
+      (.addAll connected slices)
+      (.put connection node-key chan+slices)))
 
   (get-slices [this]
     (let [s ^TreeSet (TreeSet.)]
-      (doseq [[k v] connection]
+      (doseq [[k [c v]] connection]
         (.addAll s v))
       ;; (into (sorted-set) s)
       s))
 
   (get-slices [this node-key]
-    (.get connection node-key))
+    ((.get connection node-key) 1))
 
   (get-nodes [this]
     (keys connection))
 
   (remove-node [this node-key]
-    (when-let [s (.get connection node-key)]
+    (when-let [[_ s] (.get connection node-key)]
       (.remove connection node-key)
       (.removeAll connected s)))
 
@@ -149,14 +153,15 @@
         (if-not (empty? usage)
           (do ;; (.removeAll ^TreeSet (:unused upstream-node) usage)
             ;; (add-node (:downstream upstream-node) key usage)
-            (add-node upstream (:key upstream-node) usage)
+            (add-node upstream (:key upstream-node) [(:ch-in upstream-node) usage])
             (a/tap (:mux-out upstream-node) ch-in)
-            (connect-downstream* upstream-node key usage)
+            ;; (connect-downstream* upstream-node key usage)
+            (connect-downstream* upstream-node this usage)
             true)
           false))))
 
-  (connect-downstream* [this downstream-key shared-slices]
-    (add-node downstream downstream-key shared-slices)
+  (connect-downstream* [this downstream-node shared-slices]
+    (add-node downstream (:key downstream-node) [(:ch-in downstream-node) shared-slices])
     (.removeAll unused shared-slices))
 
   (disconnect-upstream [this upstream-node]
@@ -184,6 +189,20 @@
   (downstream-full? [this]
     (= (count slices) (slice-count downstream)))
 
+
+  (send-downstream [this data]
+    (let [^HashMap ds (.connection downstream)]
+      (doseq [[k [c _]] ds]
+        ;; (println "Sending data to " k)
+        (a/put! c data))
+      true))
+
+  (send-upstream [this data]
+    (let [ups (.connection upstream)]
+      (doseq [[k [c _]] ups]
+        ;; (println "Sending data to " k)
+        (a/put! c data))
+      true))
   ;; IAsyncCommunication
   ;; (distribute [this f]
   ;;   (f this))
@@ -436,7 +455,7 @@
       (let [ups ^HashMap  (.connection ^NodeConnection (:upstream node))
             local-head    (first (:slices node))
             local-offsets ^HashMap (:local-offsets node)]
-        (doseq [[k v] ups]
+        (doseq [[k [_ v]] ups]
           ;; (tap> ["here" k v])
           (let [seg-head ^long (first v)
                 up-head  ^long (-> (k lut) :slices first)]

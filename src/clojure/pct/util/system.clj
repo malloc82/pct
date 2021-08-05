@@ -42,12 +42,14 @@
 
 (defn get-timestamp [] (.format (java.text.SimpleDateFormat. "YYYY-MM-dd'T'HH-mm-ss_Z") (java.util.Date.)))
 
+(defn timestamp [] (.format (java.text.SimpleDateFormat. "YYYY-MM-dd'T'HH-mm-ss_Z") (java.util.Date.)))
+
 (defn ns-all-vars
   "List all vars of a given namespace"
   [ns]
   (filterv #(and (instance? clojure.lang.Var %)
                  (= ns (.getName ^clojure.lang.Namespace (.ns ^clojure.lang.Var %))))
-          (vals (ns-map ns))))
+           (vals (ns-map ns))))
 
 (defn ns-publics-list [ns]
   (list (ns-name ns) (keys (ns-publics ns))))

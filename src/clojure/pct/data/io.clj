@@ -143,6 +143,7 @@
                   .asIntBuffer
                   (.get ~arr))
               ~arr)))))
+
   ([is endian n buffer]
    (let [arr (gensym)
          len (gensym)
@@ -233,8 +234,9 @@
              (Long/parseLong (String. header 0 i))
              (do (aset header i c)
                  (recur (unchecked-inc i)))))
-         (throw (java.io.IOException. (format "Error: Unexpected end when reading header. Header buffer might be too small (%d), header = %s"
-                                              buf-size (String. header 0 i)))))))))
+         (throw (java.io.IOException.
+                 (format "Error: Unexpected end when reading header. Header buffer might be too small (%d), header = %s"
+                         buf-size (String. header 0 i)))))))))
 
 
 
@@ -323,6 +325,7 @@
            (do (v i (java.lang.Double/parseDouble (.next it)))
                (recur (unchecked-inc i)))
            v)))))
+
   (^RealBlockVector [file ^RealBlockVector vctr]
    ;; (println "load-vctr2 v0.2")
    (with-open [rdr (io/reader file)]
@@ -365,6 +368,7 @@
   ;; e.g. #"x_0_(\d+)\.txt"
   (^RealBlockVector [folder pattern]
    (load-series folder pattern nil))
+
   (^RealBlockVector [folder pattern opts]
    (if-let [[^long rows ^long cols ^long slices-found] (if (and (:rows opts) (:cols opts) (:slices opts))
                                                          [(long (:rows opts)) (long (:cols opts)) (long (:slices opts))]
@@ -508,7 +512,7 @@
 (defn save-recon-opts [recon-opts folder & {:keys [name]}]
   (with-open [f (clojure.java.io/writer (format "%s/%s" folder (or name "recon_config.json")))]
     (let [recon-opts (-> recon-opts
-                         (#(if (:date %)     % (assoc % :date     (pct.util.system/get-timestamp))))
+                         (#(if (:date %)     % (assoc % :date     (pct.util.system/timestamp))))
                          (#(if (:hostname %) % (assoc % :hostname (pct.util.system/hostname)))))]
       (.write f (generate-string recon-opts
                                  {:pretty true
@@ -525,6 +529,25 @@
                        (keyword %))))))
 
 
+(defn export-plot-data [data path]
+  (with-open [f (clojure.java.io/writer path)]
+    (.write f (generate-string (-> data
+                                   (#(if (:date %)     % (assoc % :date     (pct.util.system/timestamp))))
+                                   (#(if (:hostname %) % (assoc % :hostname (pct.util.system/hostname)))))
+                               {:pretty true
+                                :key-fn #(if (keyword? %) (name %) (str %))}))))
+
+
+(defn load-plot-data
+  [^String path]
+  (let [f (java.io.File. path)]
+    (when (and (.exists f) (.isFile f))
+      (parse-string (slurp (.getPath f))
+                    #(if (re-matches #"\d+" %)
+                       (java.lang.Long/parseLong %)
+                       (keyword %))))))
+
+
 (defn save-series
   "Save series, as well as recon parameters if given"
   ([^RealBlockVector x  rows  cols slices]
@@ -532,7 +555,7 @@
   ([^RealBlockVector x  rows  cols slices recon-opts]
    (save-series x rows cols slices recon-opts {:type :txt}))
   ([^RealBlockVector x  rows  cols slices recon-opts opts]
-   (let [timestamp (pct.util.system/get-timestamp)
+   (let [timestamp (pct.util.system/timestamp)
          hostname  (pct.util.system/hostname)
          slice-offset (* (long rows) (long cols))
          output_type (or (:type opts) :txt)
@@ -639,9 +662,9 @@
 
 
 (defn createResultFolder ^java.lang.String []
-  (loop [folder ^java.io.File (java.io.File. (format "results/%s" (pct.util.system/get-timestamp)))]
+  (loop [folder ^java.io.File (java.io.File. (format "results/%s" (pct.util.system/timestamp)))]
     (if (.exists folder)
-      (recur (java.io.File. (format "results/%s" (pct.util.system/get-timestamp))))
+      (recur (java.io.File. (format "results/%s" (pct.util.system/timestamp))))
       (do (.mkdirs folder)
           (.toString folder)))))
 
@@ -686,6 +709,7 @@
    WEPL-stream : BufferedInputstream for WEPL file, if provided; otherwise, WEPL data is provided by MLP path file
 
    Return a ProtonHistory"
+
   (^ProtonHistory [^long id ^java.io.BufferedInputStream MLP-stream]
    (when-let [^int length (read-int MLP-stream __ENDIAN__ __int_buffer__)]
      (when (> length __max_intersections__)
