@@ -43,6 +43,12 @@
                                             ::iter ::state
                                             ::property]))
 
+
+(defn to-key
+  "transform a given sequence to key"
+  ^clojure.lang.Keyword [s]
+  (keyword (clojure.string/join "-" s)))
+
 (defprotocol IConnection
   (add-node    [this node-key slices])
   (get-slices  [this] [this node])
@@ -245,6 +251,8 @@
   (get-table [this])
   (connect-nodes   [this])
   (compute-offsets [this])
+
+  (nodes-start-with [this i]  "find a list of nodes that start with a particular slice")
 
   (distribute-selected [this cond-fn f] [this cond-fn f args] "apply f to selected nodes, filtered by cond-fn")
   (distribute-all      [this f] [this f args]                 "apply f to every node")
@@ -481,6 +489,15 @@
               (catch java.lang.NullPointerException e
                 (println (:slices node) seg-head up-head k (k lut))
                 (throw e))))))))
+
+
+  (nodes-start-with [this i]
+    (remove nil?
+            (mapv (fn [s]
+                    (let [k (to-key (range i (+ i s)))]
+                      (k lut)))
+                  block-sizes)))
+
 
   (distribute-selected [this cond-fn f]
     (loop [s (select [grid-walker cond-fn] grid)]

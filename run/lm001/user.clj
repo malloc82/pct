@@ -62,7 +62,7 @@
 
 (def grid  (pct.async.node/newAsyncGrid 16 (range 1 (+ 1 5)) :connect? true))
 
-(time (def result (recon/async-art grid (:index data) (:x0 data)
+(time (def result (recon/async-art grid (:index data_exp_CTP404) (:x0 data_exp_CTP404)
                                    {:iterations 6
                                     :lambda {1 0.0005
                                              2 0.0005

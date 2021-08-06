@@ -219,7 +219,8 @@
                   (dotimes [i h-size]
                     (pct.data/proj_art-5* ^pct.data.ProtonHistory (aget ^objects shuffled-data i) local-x lambda))
                   #_(a/>!! out [key local-x])
-                  (a/>!! out [key (Arrays/copyOf ^doubles local-x data-len)])
+                  ;; (a/>!! out [key (Arrays/copyOf ^doubles local-x data-len)])
+                  (pct.async.node/send-downstream node [key local-x])
                   (timbre/info (format "%s%s, (%d) : data sent." _normal_ thread-name iter))
                   (let [continue?
                         (loop [remaining (into #{} (keys offset-lut))]
@@ -251,7 +252,8 @@
                 (timbre/info (format "%s%s, (%d) : done. Sending out local-x" _term_ thread-name iter))
                 (a/>!! res [key [local-x (:global-offset node)]])
                 (a/>!! res [:end])
-                (a/put! out [:end])
+                ;; (a/put! out [:end])
+                (pct.async.node/send-downstream node [:end])
                 (let [[k & _] (a/<!! in)]
                   (timbre/info (format "%s%s, :end" _term_ thread-name))))))))
 
@@ -285,7 +287,8 @@
                         (do (dotimes [i h-size]
                               (pct.data/proj_art-5* ^pct.data.ProtonHistory (aget ^objects shuffled-data i) local-x lambda))
                             #_(a/>!! out [key local-x])
-                            (a/>!! out [key (Arrays/copyOf local-x data-len)])
+                            (pct.async.node/send-downstream node [key local-x])
+                            ;; (a/>!! out [key (Arrays/copyOf local-x data-len)])
                             (timbre/info (format "%s%s, (%d) : data sent." _normal_ thread-name iter))
                             true)
                         (let [[^clojure.lang.Keyword k ^doubles v] (a/<!! in)]
@@ -297,7 +300,9 @@
 
                             (= k :end)
                             (do (timbre/info (format "%s%s, (:end %d) : finished." _term_ thread-name iter))
-                                (a/>!! out [:end]))
+                                (pct.async.node/send-downstream node  [:end])
+                                ;; (a/>!! out [:end])
+                                )
 
                             :else
                             (if-let [[^long offset-v ^long length ^long offset-local] (k offset-lut)]
@@ -322,11 +327,74 @@
             (if-let [[k v] (a/<! in)]
               (if (= k :stop)
                 (do (timbre/info (format "%s%s: stop forwarding." _term_ thread-name)) nil)
-                (do (a/>! [key v])
+                (do #_(a/>! out [key v])
+                    (pct.async.node/send-downstream node [key v])
                     (recur)))
               (do (timbre/info (format "%s%s: input channel closed, stop forwarding." _term_ thread-name)) nil)))))
       :else
       (a/go (timbre/info (format "%s Unrecongnized type inf node [%s]" _term_ key))))))
+
+
+(comment
+ (defn head-recon
+   []
+   ;; variables need to be stored
+   local-x
+   tvs?
+   rows
+   cols
+   ell
+   alpha
+   tvs-N
+   h-size
+   shuffled-data
+   lambda
+   data-len
+   length
+   key
+   offset-lut
+   (let [local-x ^doubles (if tvs?
+                            (pct.tvs/ntvs-slice local-x [rows cols] ell :alpha alpha :N tvs-N :in-place true)
+                            local-x)]
+     (dotimes [i h-size]
+       (pct.data/proj_art-5* ^pct.data.ProtonHistory (aget ^objects shuffled-data i) local-x lambda))
+     #_(a/>!! out [key local-x])
+     (a/>!! out [key (Arrays/copyOf ^doubles local-x data-len)])
+     (timbre/info (format "%s%s, (%d) : data sent." _normal_ thread-name iter))
+     (let [continue?
+           (loop [remaining (into #{} (keys offset-lut))]
+             (if (empty? remaining)
+               (do (if dump
+                     (let [_copy_ (Arrays/copyOf ^doubles local-x data-len)]
+                       (a/put! res [key [(unchecked-inc iter) _copy_ (:global-offset node)]])))
+                   true)
+               (if-let [[^clojure.lang.Keyword k ^doubles v] (a/<!! in)]
+                 (if-let [[^long offset-v ^long length ^long offset-local] (k offset-lut)]
+                   (do (timbre/info (format "%s%s, (%d) : received data from %s" _normal_ thread-name iter k))
+                       (System/arraycopy v       (* offset-v     slice-offset)
+                                         local-x (* offset-local slice-offset)
+                                         (* length slice-offset))
+                       (recur (disj remaining k)))
+                   (do (timbre/info (format "%s%s, (%d) : could not find key %s, skip."
+                                            _normal_ thread-name iter k))
+                       (recur remaining)))
+                 (do (timbre/info (format "%s%s, (%d) : incoming channel is closed."
+                                          _term_ thread-name iter))
+                     nil))))]
+       (if continue?
+         (recur (unchecked-inc iter)
+                (+ (long (min ell iter)) (long (rand-int (Math/abs (- ell iter))))))
+         (do (timbre/info (format "%s%s, (%d) : stopped, recon incomplete." _term_ thread-name iter))))))))
+
+(defn thread-recon
+  [^long id ^pct.data.HistoryIndex global-index ^RealBlockVector init-x opts]
+  (loop [state :init]
+    (case state
+      :init ()
+      :normal ()
+      :fin ())))
+
+
 
 
 (defn async-art [^pct.async.node.AsyncGrid grid ^pct.data.HistoryIndex global-index ^RealBlockVector init-x opts]
