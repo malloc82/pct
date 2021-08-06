@@ -253,6 +253,7 @@
   (compute-offsets [this])
 
   (nodes-start-with [this i]  "find a list of nodes that start with a particular slice")
+  (clear-channels [this])
 
   (distribute-selected [this cond-fn f] [this cond-fn f args] "apply f to selected nodes, filtered by cond-fn")
   (distribute-all      [this f] [this f args]                 "apply f to every node")
@@ -497,6 +498,18 @@
                     (let [k (to-key (range i (+ i s)))]
                       (k lut)))
                   block-sizes)))
+
+
+  (clear-channels [this]
+    (doseq [[k v] lut]
+      (send-downstream v :clear))
+    (doseq [[k v] lut]
+      (loop []
+        (if-let [data (a/poll! (:ch-in v))]
+          (if (not (= data :clear))
+            (do (timbre/info (format "Async clear-channels: (%s) old data cleared" (:key v)))
+                (recur)))
+          (timbre/info (format "Async clear-channels: Something wrong, did not receive data from node %s" (:key v)))))))
 
 
   (distribute-selected [this cond-fn f]
