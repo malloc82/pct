@@ -70,8 +70,8 @@
   (get-connection-status    [this]                   "get current upstream & downstream connection info as a persistent data")
 
   (send-downstream          [this data]              "send data downstream")
-  (send-upstream            [this data]              "send data upstream"))
-
+  (send-upstream            [this data]              "send data upstream")
+  (recv-upstream            [this x] [this x term]))
 
 (defprotocol IAsyncCommunication
   (asyncTest [this f] "For testing, f args: [in out]"))
@@ -85,7 +85,7 @@
   (getProperties [this])
   (clearProperties! [this]))
 
-(defrecord NodeConnection [^TreeSet connected ^HashMap connection]
+(defrecord NodeConnection [^TreeSet connected ^HashMap connection ^HashMap hidden]
   IConnection
   (add-node [this node-key chan+slices]
     (let [[_ slices] chan+slices]
@@ -115,17 +115,17 @@
 
 (defn newNodeConnection
   ([]
-   (NodeConnection. (TreeSet.) (HashMap.)))
+   (NodeConnection. (TreeSet.) (HashMap.) (HashMap.)))
   ([slice-count]
-   (NodeConnection. (TreeSet.) (HashMap. ^int (int slice-count)))))
+   (NodeConnection. (TreeSet.) (HashMap. ^int (int slice-count)) (HashMap.))))
 
 
-(defrecord AsyncNode [key slices
-                      ^ManyToManyChannel ch-in ^ManyToManyChannel ch-out mux-out ;; data channels
+(defrecord AsyncNode [key slices ^long offset
+                      ^ManyToManyChannel ch-in ^ManyToManyChannel ch-out
                       ^ManyToManyChannel ch-log ;; data logging, for debugging & testing
                       ^TreeSet unused
                       ^NodeConnection upstream ^NodeConnection downstream
-                      ^HashMap local-offsets ^clojure.lang.PersistentVector global-offset
+                      ^clojure.lang.PersistentVector global-offset
                       properties]
   clojure.lang.IFn
   (invoke [this] (count slices))
@@ -152,19 +152,23 @@
                        usage))
                    usage)))))
 
+
   (connect-upstream [this upstream-node]
     (let [usage (get-overlap upstream-node this)]
       (if ((:key upstream-node) (:connection upstream))
         true
-        (if-not (empty? usage)
-          (do ;; (.removeAll ^TreeSet (:unused upstream-node) usage)
+        (if-let [s (first usage)]
+          (let [offset-ups   (- s (first (:slices upstream-node)))
+                offset-local (- s (first slices))]
+            ;; (.removeAll ^TreeSet (:unused upstream-node) usage)
             ;; (add-node (:downstream upstream-node) key usage)
-            (add-node upstream (:key upstream-node) [(:ch-in upstream-node) usage])
-            (a/tap (:mux-out upstream-node) ch-in)
+            (add-node upstream (:key upstream-node) [[(* offset offset-ups) (* offset (count usage)) (* offset offset-local)] usage])
+            ;; (a/tap (:mux-out upstream-node) ch-in)
             ;; (connect-downstream* upstream-node key usage)
             (connect-downstream* upstream-node this usage)
             true)
           false))))
+
 
   (connect-downstream* [this downstream-node shared-slices]
     (add-node downstream (:key downstream-node) [(:ch-in downstream-node) shared-slices])
@@ -173,7 +177,7 @@
   (disconnect-upstream [this upstream-node]
     (if-let [usage (get-slices upstream (:key upstream-node))]
       (do (remove-node upstream (:key upstream-node))
-          (a/untap (:mux-out upstream-node) ch-in)
+          ;; (a/untap (:mux-out upstream-node) ch-in)
           (.addAll unused usage)
           (disconnect-downstream* upstream-node key)
           ;; (remove-node (:downstream upstream-node) key)
@@ -189,8 +193,10 @@
     (doseq [ups (get-nodes upstream)]
       (disconnect-upstream this ups)))
 
+
   (upstream-full? [this]
     (= (count slices) (slice-count upstream)))
+
 
   (downstream-full? [this]
     (= (count slices) (slice-count downstream)))
@@ -203,12 +209,57 @@
         (a/put! c data))
       true))
 
-  (send-upstream [this data]
-    (let [ups (.connection upstream)]
-      (doseq [[k [c _]] ups]
-        ;; (println "Sending data to " k)
-        (a/put! c data))
-      true))
+
+  (recv-upstream [this x]
+    (let [^HashMap connection (.connection upstream)]
+     (loop [remaining (into {} connection)]
+       (if (empty? remaining)
+         (do x)
+         (if-let [[^clojure.lang.Keyword k v] (a/<!! ch-in)]
+           (if-let [[[^long offset-v ^long length ^long offset-local]] (.get connection k)]
+             (do #_(timbre/info (format "%s%s, (%d) : received data from %s" _normal_ thread-name iter k))
+                 (System/arraycopy ^doubles v offset-v ^doubles x offset-local length)
+                 (recur (dissoc remaining k)))
+             (do (timbre/info (format "%s : could not find key %s, skip." key k))
+                 (recur remaining)))
+           (do (timbre/info (format "%s : input channel closed." key))
+               nil))))))
+
+
+  ;; (recv-upstream [this x slice-offset]
+  ;;   (loop [remaining (into {} local-offsets)]
+  ;;     (if (empty? remaining)
+  ;;       (do x)
+  ;;       (if-let [[^clojure.lang.Keyword k v] (a/<!! ch-in)]
+  ;;         (if-let [[^long offset-v ^long length ^long offset-local] (.get local-offsets k)]
+  ;;           (do #_(timbre/info (format "%s%s, (%d) : received data from %s" _normal_ thread-name iter k))
+  ;;               (System/arraycopy ^doubles v (* offset-v     slice-offset)
+  ;;                                 ^doubles x (* offset-local slice-offset)
+  ;;                                 (* length slice-offset))
+  ;;               (recur (dissoc remaining k)))
+  ;;           (do (timbre/info (format "%s : could not find key %s, skip." key k))
+  ;;               (recur remaining)))
+  ;;         (do (timbre/info (format "%s : input channel closed." key))
+  ;;             nil)))))
+
+  (recv-upstream [this x term]
+    (let [^HashMap connection (.connection upstream)]
+     (loop [remaining (into {} connection), valid true]
+       (if (empty? remaining)
+         (do (if valid x nil))
+         (if-let [[^clojure.lang.Keyword k v] (a/<!! ch-in)]
+           (if (= k term)
+             (recur (dissoc remaining v) false)
+             (if-let [[[^long offset-v ^long length ^long offset-local]] (.get connection k)]
+               (do #_(timbre/info (format "%s%s, (%d) : received data from %s" _normal_ thread-name iter k))
+                   (System/arraycopy ^doubles v offset-v ^doubles x offset-local length)
+                   (recur (dissoc remaining k) valid))
+               (do (timbre/info (format "%s : could not find key %s, skip." key k))
+                   (recur remaining valid))))
+           (do (timbre/info (format "%s : input channel closed." key))
+               nil))))))
+
+
   ;; IAsyncCommunication
   ;; (distribute [this f]
   ;;   (f this))
@@ -222,26 +273,27 @@
 
 
 (defn newAsyncNode
-  ([slices]
-   (newAsyncNode slices :body))
-  ([slices type]
+  ([slices ^long slice-offset]
+   (newAsyncNode slices slice-offset :body))
+  ([slices ^long slice-offset type]
    {:pre [(spec/valid? ::continuous-slice-ids? slices)
           (spec/valid? #{:head :body :fake} type)]
     :post []}
-   (let [ch-out (a/chan 4)
+   (let [;; ch-out (a/chan 4)
          n (int (count slices))]
      (map->AsyncNode {:type       type
                       :ch-in      (a/chan 4)
-                      :ch-out     ch-out
-                      :mux-out    (a/mult ch-out)
+                      :ch-out     (a/chan 4)
+                      ;; :mux-out    (a/mult ch-out)
                       :ch-log     (a/chan 4)
                       :key        (keyword (clojure.string/join "-" slices))
                       :slices     (into (sorted-set) slices)
+                      :offset     (long slice-offset)
                       :unused     (TreeSet. ^java.util.Collection slices)
                       :upstream   (newNodeConnection n)
                       :downstream (newNodeConnection n)
                       :global-offset [(int (first slices)) n (int 0)] ;; offset-x, length, offset-y
-                      :local-offsets (HashMap. n)
+                      ;; :local-offsets (HashMap. n)
                       :properties (atom {})}))))
 
 
@@ -252,8 +304,10 @@
   (connect-nodes   [this])
   (compute-offsets [this])
 
-  (nodes-start-with [this i]  "find a list of nodes that start with a particular slice")
-  (clear-channels [this])
+  (nodes-start-with  [this i]  "find a list of nodes that start with a particular slice")
+  (clear-channels    [this])
+  (trim-connections  [this]    "Remove direct connections from both upstream and downstream that have
+                                the same starting slice, this is for optimized version of reconstruction")
 
   (distribute-selected [this cond-fn f] [this cond-fn f args] "apply f to selected nodes, filtered by cond-fn")
   (distribute-all      [this f] [this f args]                 "apply f to every node")
@@ -512,6 +566,21 @@
           (timbre/info (format "Async clear-channels: Something wrong, did not receive data from node %s" (:key v)))))))
 
 
+  (trim-connections [this]
+    (doseq [[_ v] lut]
+      (let [^HashMap m      (-> v :downstream :connection)
+            ^HashMap hidden (-> v :downstream :hidden)]
+        (doseq [k (keys m)]
+          (when (= (-> v :slices first) (-> (k lut) :slices first))
+            (.put hidden k (.remove m k)))))
+      (let [^HashMap m      (-> v :upstream :connection)
+            ^HashMap hidden (-> v :upstream :hidden)]
+        (doseq [k (keys m)]
+          (when (= (-> v :slices first) (-> (k lut) :slices first))
+            (.put hidden k (.remove m k))))))
+    this)
+
+
   (distribute-selected [this cond-fn f]
     (loop [s (select [grid-walker cond-fn] grid)]
       (when-let [node (first s)]
@@ -540,7 +609,7 @@
   (collect-data [this] ;; collection data from head nodes
     (let [res-ch (a/chan (count head-nodes))]
       (a/go
-        (loop [remaining (into #{} (mapv :ch-log head-nodes))]
+        (loop [remaining (into #{} (mapv :ch-out head-nodes))]
           ;; (timbre/info (format "collect-data: remaining %s" remaining))
           (if (empty? remaining)
             (a/close! res-ch)
@@ -554,7 +623,7 @@
   (collect-data [this cond-fn]
     (a/go
       (let [nodes (select [grid-walker cond-fn] grid)
-            cs (mapv :ch-log nodes)]
+            cs (mapv :ch-out nodes)]
         (loop [remaining (into #{} (mapv :key nodes))
                acc (transient {})]
           ;; (timbre/info (format "collect-data: remaining %s" remaining))
@@ -611,7 +680,7 @@
 
 
 (defn newAsyncGrid
-  ([slice-count block-sizes & {:keys [connect?]}]
+  ([slice-count block-sizes & {:keys [connect? slice-offset] :or {slice-offset 1}}]
    {:pre [(spec/valid? ::int-seq? block-sizes)]}
    (let [sorted-block-sizes (sort block-sizes)
          node-map  ^HashMap (HashMap. ^int (reduce + (map (fn [n] (int (- slice-count (dec n)))) block-sizes))) ;; good estimate on size
@@ -627,9 +696,9 @@
                                        (mapv #(let [node (if (and (= block-size head-size)
                                                                   (= start-idx 0))
                                                            (if (= block-size (count %))
-                                                             (newAsyncNode % :head)
-                                                             (newAsyncNode % :fake))
-                                                           (newAsyncNode % :body))]
+                                                             (newAsyncNode % slice-offset :head)
+                                                             (newAsyncNode % slice-offset :fake))
+                                                           (newAsyncNode % slice-offset :body))]
                                                 (.put node-map (:key node) node)
                                                 (let [type (:type node)]
                                                   (when (or (= type :head) (= type :fake))
@@ -648,7 +717,7 @@
      (if connect?
        (doto grid
          (connect-nodes)
-         (compute-offsets))
+         #_(compute-offsets))
        grid))))
 
 
