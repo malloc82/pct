@@ -510,13 +510,16 @@
 
 
 (defn save-recon-opts [recon-opts folder & {:keys [name]}]
-  (with-open [f (clojure.java.io/writer (format "%s/%s" folder (or name "recon_config.json")))]
-    (let [recon-opts (-> recon-opts
-                         (#(if (:date %)     % (assoc % :date     (pct.util.system/timestamp))))
-                         (#(if (:hostname %) % (assoc % :hostname (pct.util.system/hostname)))))]
-      (.write f (generate-string recon-opts
-                                 {:pretty true
-                                  :key-fn #(if (keyword? %) (name %) (str %))})))))
+  (let [fname (format "%s/%s" folder (or name "recon_config.json"))]
+    (with-open [f (clojure.java.io/writer fname)]
+      (let [recon-opts (-> recon-opts
+                           (#(if (:date %)     % (assoc % :date     (pct.util.system/timestamp))))
+                           (#(if (:hostname %) % (assoc % :hostname (pct.util.system/hostname)))))]
+        (.write f (generate-string recon-opts
+                                   {:pretty true
+                                    :key-fn #(if (clojure.core/keyword? %)
+                                               (clojure.core/name %)
+                                               (clojure.core/str %))}))))))
 
 
 (defn load-recon-opts
@@ -535,7 +538,9 @@
                                    (#(if (:date %)     % (assoc % :date     (pct.util.system/timestamp))))
                                    (#(if (:hostname %) % (assoc % :hostname (pct.util.system/hostname)))))
                                {:pretty true
-                                :key-fn #(if (keyword? %) (name %) (str %))}))))
+                                :key-fn #(if (clojure.core/keyword? %)
+                                               (clojure.core/name %)
+                                               (clojure.core/str %))}))))
 
 
 (defn load-plot-data
@@ -563,7 +568,7 @@
          folder (format "%s/%s"
                         (if-let [folder (:folder opts)] folder ".")
                         (format "%s_%s" hostname timestamp))]
-     (.mkdir (java.io.File. folder))
+     (.mkdirs (java.io.File. folder))
      ;; write recon-opts
      (save-recon-opts recon-opts folder)
      #_(with-open [f (clojure.java.io/writer (format "%s/%s" folder "recon_config.json"))]
@@ -612,7 +617,7 @@
                                          5 0.00001}}
                        {:pretty true
                         :key-fn (fn [k] (if (keyword? k)
-                                         (name k)
+                                         (clojure.core/name k)
                                          (str k)))}))))
 
 ;; (defn save-series [x prefix & {:keys [rows cols ext binary filename]
@@ -676,7 +681,7 @@
 ;;     (assert (or (nil? rows) (nil? cols) (nil? slices)))
 ;;     (with-open [f (clojure.java.io/writer (format "%s/config.txt" folder))]
 ;;       (.write f (generate-string config {:pretty true
-;;                                          :key-fn (fn [k] (if (keyword? k) (name k) (str k)))}))
+;;                                          :key-fn (fn [k] (if (keyword? k) (clojure.core/name k) (str k)))}))
 ;;       )))
 
 
