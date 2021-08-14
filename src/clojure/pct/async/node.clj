@@ -269,7 +269,13 @@
   (updateProperty [this k f] (swap! properties update k f))
   (getProperty [this k]    (get @properties k))
   (getProperties [this]    @properties)
-  (clearProperties! [this] (reset! properties {})))
+  (clearProperties! [this] (reset! properties {}))
+
+  java.io.Closeable
+  (close [this]
+    (a/close! ch-in)
+    (a/close! ch-out)
+    (a/close! ch-log)))
 
 
 (defn newAsyncNode
@@ -304,13 +310,16 @@
   (connect-nodes   [this])
   (compute-offsets [this])
 
-  (nodes-start-with  [this i]  "find a list of nodes that start with a particular slice")
+  (get-followers     [this head])
+  (nodes-start-with  [this i]    "find a list of nodes that start with a particular slice")
   (clear-channels    [this])
   (trim-connections  [this]    "Remove direct connections from both upstream and downstream that have
                                 the same starting slice, this is for optimized version of reconstruction")
 
   (distribute-selected [this cond-fn f] [this cond-fn f args] "apply f to selected nodes, filtered by cond-fn")
   (distribute-all      [this f] [this f args]                 "apply f to every node")
+  (distribute-heads    [this f args]                          "distribute function through heads")
+  (collect-heads       [this]                                 "collect data from heads")
   (collect-data    [this] [this cond-fn]      "Collect one data from each of the selected node, filtered by cond-fn")
   (data-log   [this]  "get a data log channel"))
 
@@ -546,6 +555,15 @@
                 (throw e))))))))
 
 
+  (get-followers [this head-node]
+    (let [i (first (:slices head-node))]
+      (remove nil?
+            (mapv (fn [s]
+                    (let [k (to-key (range i (+ i s)))]
+                      (k lut)))
+                  block-sizes))))
+
+
   (nodes-start-with [this i]
     (remove nil?
             (mapv (fn [s]
@@ -606,6 +624,14 @@
         (apply f node args)
         (recur (next s)))))
 
+
+  (distribute-heads [this f args]
+    (doseq [h head-nodes]
+      (apply f (get-followers this h) args)))
+
+
+  (collect-heads [this])
+
   (collect-data [this] ;; collection data from head nodes
     (let [res-ch (a/chan (count head-nodes))]
       (a/go
@@ -649,7 +675,12 @@
           mix-out (a/mix log-ch)]
       (doseq [d (select grid-walker grid)]
         (a/admix mix-out (:ch-log d)))
-      log-ch)))
+      log-ch))
+
+  java.io.Closeable
+  (close [this]
+    (doseq [[_ node] lut]
+      (.close ^AsyncNode node))))
 
 #_(defn newAsyncGrid
   ([slice-count max-block-size]

@@ -114,6 +114,7 @@
                         (if (not= xi 0.0)
                           (x i (+ xi a)))
                         (recur (unchecked-inc-int k)))))
+
                   (recur (unchecked-inc i)))
                 x)))))]
     ))
@@ -284,144 +285,131 @@
       (a/go (timbre/info (format "%s Unrecongnized type inf node [%s]" _term_ key))))))
 
 
-
-
-(defn head-recon-block
+(defn head-node-recon
   [thread-name iter ell ^doubles local-x ^pct.async.node.AsyncNode node ^ArrayList cache opts]
-  (let [{slices :slices, in :ch-in, out :ch-out, res :ch-log, key :key, offset-lut :local-offsets} node
-        [^long offset-x ^long length ^long offset-local] (:global-offset node)
+  (let [{slices :slices, in :ch-in, res :ch-out, key :key} node
+        ;; [^long offset-x ^long length ^long offset-local] (:global-offset node)
         dump (-> opts :dump)
         tvs? (:tvs? opts)
         key  (:key node)
-        [^int h-size ^objects shuffled-data ^double lambda ^long data-len ^long slice-offset
-         ^int rows ^int cols ups-keys ^double alpha ^long tvs-N] cache]
-    #_(timbre/info (format "%s%s: start: block [%2d %2d], h-size=%-7d, step=%-5d, lambda=%s, [%6d, %5d], tvs=%s"
-                         _normal_ thread-name (first slices) slice-count h-size step (. float-format format lambda)
-                         (* offset-x slice-offset) slice-offset
+        [^int h-size ^objects shuffled-data ^double lambda  ^double alpha ^long tvs-N] cache]
+    (timbre/info (format "%s (%d): start: block [%2d %2d], h-size=%-7d, lambda=%s, tvs=%s"
+                         thread-name iter (first slices) (count slices) h-size (. float-format format lambda)
                          (if tvs? "on" "off")))
-    (when (< 0 ^long iter)
-      (loop [remaining ups-keys]
-        (if (empty? remaining)
-          (do (if dump
-                (let [_copy_ (Arrays/copyOf ^doubles local-x data-len)]
-                  (a/put! res [key [(unchecked-inc ^long iter) _copy_ (:global-offset node)]])))
-              true)
-          (if-let [[^clojure.lang.Keyword k ^doubles v] (a/<!! in)]
-            (if-let [[^long offset-v ^long length ^long offset-local] (k offset-lut)]
-              (do (timbre/info (format "%s%s, (%d) : received data from %s" _normal_ thread-name iter k))
-                  (System/arraycopy v       (* offset-v     slice-offset)
-                                    local-x (* offset-local slice-offset)
-                                    (* length slice-offset))
-                  (recur (disj remaining k)))
-              (do (timbre/info (format "%s%s, (%d) : could not find key %s, skip."
-                                       _normal_ thread-name iter k))
-                  (recur remaining)))
-            (do (timbre/info (format "%s%s, (%d) : incoming channel is closed."
-                                     _term_ thread-name iter))
-                nil)))))
-    (let [local-x ^doubles (if tvs?
-                             (pct.tvs/ntvs-slice local-x [rows cols] ell :alpha alpha :N tvs-N :in-place true)
-                             local-x)]
+    (let [^doubles local-x (let [^doubles x (if (< 0 ^long iter)
+                                              (async-node/recv-upstream node local-x :end)
+                                              local-x)]
+                             (if tvs?
+                               (pct.tvs/ntvs-slice x [rows cols] ell :alpha alpha :N tvs-N :in-place true)
+                               x))]
       (dotimes [i h-size]
         (pct.data/proj_art-5* ^pct.data.ProtonHistory (aget ^objects shuffled-data i) local-x lambda))
       ;; (a/>!! out [key (Arrays/copyOf ^doubles local-x data-len)])
-      #_(a/>!! out [key local-x])
       (async-node/send-downstream node [key local-x])
-      (timbre/info (format "%s%s, (%d) : data sent." _normal_ thread-name iter)))))
+      #_(timbre/info (format "%s%s, (%d) : data sent." _normal_ thread-name iter)))))
 
 
 
-(defn body-recon-block
+(defn body-node-recon
   [thread-name iter ^doubles local-x ^pct.async.node.AsyncNode node ^ArrayList cache opts]
-  (let [{in :ch-in, out :ch-out, res :ch-log, key :key, offset-lut :local-offsets} node
-        [^long offset-x ^long length ^long offset-local] (:global-offset node)
-        key  (:key node)
-        [^int h-size ^objects shuffled-data ^double lambda ^long data-len ^long slice-offset
-         ^int rows ^int cols ups-keys & _] cache]
-    #_(timbre/info (format "%s%s: start: block [%2d %2d], h-size=%-7d, step=%-5d, lambda=%s, [%6d, %5d], tvs=%s"
-                         _normal_ thread-name (first slices) slice-count h-size step (. float-format format lambda)
-                         (* offset-x slice-offset) slice-offset
-                         (if tvs? "on" "off")))
-    (loop [remaining ups-keys]
-      (if (empty? remaining)
-        (do #_(if dump
-              (let [_copy_ (Arrays/copyOf ^doubles local-x data-len)]
-                (a/put! res [key [(unchecked-inc iter) _copy_ (:global-offset node)]])))
-            true)
-        (if-let [[^clojure.lang.Keyword k ^doubles v] (a/<!! in)]
-          (if-let [[^long offset-v ^long length ^long offset-local] (k offset-lut)]
-            (do (timbre/info (format "%s%s, (%d) : received data from %s" _normal_ thread-name iter k))
-                (System/arraycopy v       (* offset-v     slice-offset)
-                                  local-x (* offset-local slice-offset)
-                                  (* length slice-offset))
-                (recur (disj remaining k)))
-            (do (timbre/info (format "%s%s, (%d) : could not find key %s, skip."
-                                     _normal_ thread-name iter k))
-                (recur remaining)))
-          (do (timbre/info (format "%s%s, (%d) : incoming channel is closed."
-                                   _term_ thread-name iter))
-              nil))))
-    (dotimes [i h-size]
-      (pct.data/proj_art-5* ^pct.data.ProtonHistory (aget ^objects shuffled-data i) local-x lambda))
-    ;; (a/>!! out [key (Arrays/copyOf ^doubles local-x data-len)])
-    #_(a/>!! out [key local-x])
-    (async-node/send-downstream node [key local-x])
-    (timbre/info (format "%s%s, (%d) : data sent." _normal_ thread-name iter))))
+  (let [{in :ch-in, res :ch-out, key :key, slices :slices} node
+        ;; [^long offset-x ^long length ^long offset-local] (:global-offset node)
+        [^int h-size ^objects shuffled-data ^double lambda] cache]
+    #_(timbre/info (format "%s (%d): start: block [%2d %2d], h-size=%-7d, lambda=%s"
+                         thread-name iter (first slices) (count slices) h-size (. float-format format lambda)))
+    (let [^doubles local-x (async-node/recv-upstream node local-x :end)]
+      (dotimes [i h-size]
+        (pct.data/proj_art-5* ^pct.data.ProtonHistory (aget ^objects shuffled-data i) local-x lambda))
+      (async-node/send-downstream node [key local-x])
+      #_(timbre/info (format "%s%s, (%d) : data sent." _normal_ thread-name iter)))))
 
 
 (defn thread-recon
   [node-list ^pct.data.HistoryIndex global-index ^RealBlockVector init-x opts]
-  (let [rows (.rows global-index), cols (.cols global-index)
-        thread-name (format "[%3s]" (-> node-list first :key))
-        tvs? (:tvs? opts)
-        iterations    (long (or (:iterations opts) 6))
-        alpha (double (or (:alpha opts) 0.75))
-        tvs-N (long   (or (:tvs-N opts) 5))
-        slice-offset (long (pct.data/slice-size* global-index))
-        head-node  (first node-list)
-        body-nodes (next  node-list)]
-    (let [local-x (double-array (reduce max (mapv #(%) node-list)))
-          caches  (mapv (fn [node]
-                          (let [;; cache (HashMap.)
-                                slices (:slices node)
-                                slice-count (count slices)
-                                data-len (* slice-offset slice-count)
-                                ^ArrayList histories (first (global-index (first slices) slice-count))
-                                h-size (.size histories)
-                                step (find-prime-step h-size)
-                                ^double lambda (-> opts :lambda (get slice-count))
-                                ^objects shuffled-data (let [arr (object-array h-size)]
-                                                         (when (< 0 h-size)
-                                                           (Collections/sort histories)
-                                                           (loop [j (long 0), i step]
-                                                             (if (= i 0)
-                                                               (aset arr j (.get histories 0))
-                                                               (do (aset arr j (.get histories i))
-                                                                   (recur (unchecked-inc j) (long (mod (+ i step) h-size)))))))
-                                                         arr)
-                                ups-keys (into #{} (keys (:offset-lut node)))]
-                            [h-size shuffled-data lambda data-len slice-offset rows cols ups-keys alpha tvs-N]))
-                        node-list)]
-      (loop [iter (long 0), ell (long 0)]
-        (if (< iter iterations)
-          (do (head-recon-block thread-name iter ell local-x head-node (caches 0) opts)
-              (loop [i (long 1), body body-nodes]
-                (if-let [node (first body)]
-                  (do (body-recon-block thread-name iter local-x node (caches i) opts)
-                      (recur (unchecked-inc i) (next body)))))
-              (recur (unchecked-inc iter)
-                     (+ (long (min ell iter)) (long (rand-int (Math/abs (- ell iter)))))))
-          (do (async-node/recv-upstream head-node local-x)
-              (a/put! (:ch-log head-node) [(:key head-node) [local-x (:global-offset head-node)]])))))))
+  (a/thread
+    (let [head-node  (first node-list)
+          body-nodes (next  node-list)
+          [^long offset-x ^long length ^long offset-local] (:global-offset head-node)
+          ^long slice-offset (:offset head-node)
+          ;; rows (.rows global-index), cols (.cols global-index)
+          thread-name (format "[%3s]" (-> node-list first :key))
+          tvs? (:tvs? opts)
+          iterations    (long (or (:iterations opts) 6))
+          alpha (double (or (:alpha opts) 0.75))
+          tvs-N (long   (or (:tvs-N opts) 5))
+          ;; slice-offset (long (pct.data/slice-size* global-index))
+          ]
+      (let [local-x (transfer! (subvector init-x (* offset-x slice-offset) slice-offset)
+                               (double-array (* slice-offset ^long (reduce max (mapv #(%) node-list)))))
+            caches  (mapv (fn [node]
+                            (let [ ;; cache (HashMap.)
+                                  slices (:slices node)
+                                  slice-count (count slices)
+                                  ^ArrayList histories (first (global-index (first slices) slice-count))
+                                  h-size (.size histories)
+                                  step (find-prime-step h-size)
+                                  ^double lambda (-> opts :lambda (get slice-count))
+                                  ^objects shuffled-data (let [arr (object-array h-size)]
+                                                           (when (< 0 h-size)
+                                                             (Collections/sort histories)
+                                                             (loop [j (long 0), i step]
+                                                               (if (= i 0)
+                                                                 (aset arr j (.get histories 0))
+                                                                 (do (aset arr j (.get histories i))
+                                                                     (recur (unchecked-inc j) (long (mod (+ i step) h-size))))))
+                                                             arr))]
+                              ;; (println slices slice-count h-size #_(alength shuffled-data) #_(alength local-x))
+                              ;; (println (alength shuffled-data))
+                              [h-size shuffled-data lambda alpha tvs-N]))
+                          node-list)]
+        (loop [iter (long 0), ell (long 0)]
+          (if (< iter iterations)
+            (do #_(timbre/info (format "%s: iter=%d" thread-name iter))
+                (head-node-recon thread-name iter ell local-x head-node (caches 0) opts)
+                (loop [i (long 1), body body-nodes]
+                  (if-let [node (first body)]
+                    (do (body-node-recon thread-name iter local-x node (caches i) opts)
+                        (recur (unchecked-inc i) (next body)))))
+                #_(timbre/info (format "%s: end of iter %d" thread-name iter))
+                (recur (unchecked-inc iter)
+                       (+ (long (min ell iter)) (long (rand-int (Math/abs (- ell iter)))))))
+            (do (timbre/info (format "%s: done. Waiting for final iter" thread-name))
+                (async-node/recv-upstream head-node local-x)
+                (timbre/info (format "%s: %s done." thread-name (:slices head-node)))
+                (let [out (:ch-out head-node)
+                      key (:key    head-node)]
+                  (a/put! out [key [local-x (:global-offset head-node)]])
+                  (a/put! out [:end key])))))))))
 
 
-
-(defn async-art [^pct.async.node.AsyncGrid grid ^pct.data.HistoryIndex global-index ^RealBlockVector init-x opts]
+(defn async-art-blocked [^pct.async.node.AsyncGrid grid ^pct.data.HistoryIndex global-index ^RealBlockVector init-x opts]
   {:pre [(if-let [iter (:iterations opts)]
            (spec/valid? (spec/and pos? int?) iter)
            true)]
    :post []}
   (async-node/distribute-all grid block-recon [global-index init-x (dissoc opts :dump)])
+  (let [res-ch (async-node/collect-data grid)
+        slice-offset (long (pct.data/slice-size* global-index))
+        final-x ^RealBlockVector (zero init-x)]
+    (loop []
+      (if-let [[k msg] (a/<!! res-ch)]
+        (let [n (count msg)]
+          (if (= n 2)
+            (let [[^doubles arr [^long global-offset ^long len _]] msg
+                  v (subvector final-x (* global-offset slice-offset) (* len slice-offset))]
+              (transfer! arr v)
+              (recur))
+            (do (println (format "Message format is wrong, expect n=2, got n=%d. Skip." n))
+                (recur))))
+        final-x))))
+
+
+(defn async-art-threaded [^pct.async.node.AsyncGrid grid ^pct.data.HistoryIndex global-index ^RealBlockVector init-x opts]
+  {:pre [(if-let [iter (:iterations opts)]
+           (spec/valid? (spec/and pos? int?) iter)
+           true)]
+   :post []}
+  (async-node/distribute-heads grid thread-recon [global-index init-x (dissoc opts :dump)])
   (let [res-ch (async-node/collect-data grid)
         slice-offset (long (pct.data/slice-size* global-index))
         final-x ^RealBlockVector (zero init-x)]
