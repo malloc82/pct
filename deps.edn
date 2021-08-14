@@ -99,6 +99,28 @@
             :jvm-opts ^:replace ["-Dclojure.core.async.pool-size=30" "-Xmx256g"
                                  "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED"]}
 
+           :dev-repl/pb005
+           {:extra-deps {cider/cider-nrepl              {:mvn/version "0.26.0"}
+                         refactor-nrepl/refactor-nrepl  {:mvn/version "2.5.0"}
+                         nrepl/nrepl                    {:mvn/version "0.8.3"}
+                         org.clojure/tools.analyzer     {:mvn/version "1.0.0"}
+                         org.clojure/tools.analyzer.jvm {:mvn/version "1.1.0"}
+                         ,}
+            :exec-fn    pct.util.repl/start-repl
+            :exec-args  {:interactive true
+                         :port 8000
+                         :middleware [cider.nrepl/cider-middleware,
+                                      refactor-nrepl.middleware/wrap-refactor]
+                         :color true
+                         :verbose true
+                         ;; :global-vars {*warn-on-reflecntion* true
+                         ;;               *unchecked-math* :warn-on-boxed}
+                         ,}
+            :main-opts  ["-m" "nrepl.cmdline" "-i" "-p" "8000"
+                         "--middleware" "[cider.nrepl/cider-middleware]"]
+            :jvm-opts ^:replace ["-Dclojure.core.async.pool-size=10" "-Xmx256g"
+                                 "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED"]}
+
            :dev-repl/lm001-jmc
            {:extra-deps {cider/cider-nrepl              {:mvn/version "0.26.0"}
                          refactor-nrepl/refactor-nrepl  {:mvn/version "2.5.0"}
@@ -166,6 +188,14 @@
 
            :env/run-lm001
            {:extra-paths ["run/lm001"]
+            :extra-deps {;; add-lib3 branch
+                         ;; usage: (require '[clojure.tools.deps.alpha.repl :refer [add-libs]])
+                         ;;        (add-libs '{com.rpl/specter {:mvn/version "1.1.3"}})
+                         org.clojure/tools.deps.alpha  {:git/url "https://github.com/clojure/tools.deps.alpha"
+                                                        :sha     "241cd24c35ba770aea4773ea161d45276e5d3a73"}}}
+
+           :env/run-pb005
+           {:extra-paths ["run/pb005"]
             :extra-deps {;; add-lib3 branch
                          ;; usage: (require '[clojure.tools.deps.alpha.repl :refer [add-libs]])
                          ;;        (add-libs '{com.rpl/specter {:mvn/version "1.1.3"}})
