@@ -1,5 +1,9 @@
 (ns user
   (:require pct.util.system
+            pct.async.node
+            pct.common
+            pct.data
+            pct.data.io
             [taoensso.timbre :as timbre]
             [clojure.core.async :as a]
             [clojure.spec.alpha :as spec]
@@ -7,6 +11,8 @@
             [clojure.core.async.impl.mutex :as mutex]
             [clojure.inspector :as inspector]
             [clojure.tools.deps.alpha.repl :refer [add-libs]]
+            [clojure.data.json :as json]
+            [cheshire.core :refer :all]
             [com.rpl.specter :as spr]
             [uncomplicate.neanderthal
              [core :refer :all]
@@ -18,7 +24,7 @@
             [uncomplicate.neanderthal.internal.host
              [mkl :as mkl]]
             [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]]
-            pct.common pct.data pct.data.io)
+            )
   (:import [java.util ArrayList HashMap]))
 
 ;; (set! *warn-on-reflection* true)
@@ -42,3 +48,15 @@
   (timbre/info "    JVM Max Heap:   " heap))
 
 
+(def grid      (-> (pct.async.node/newAsyncGrid 16 (range 1 (+ 1 5)) :connect? true :slice-offset (* 200 200))
+                   (pct.async.node/trim-connections)))
+;; (def grid-9-5  (pct.async.node/newAsyncGrid 9  (range 1 (+ 1 5)) :connect? true))
+
+
+
+#_(defn factorial ^java.math.BigInteger [^long n]
+    (loop [n n
+           fact ^java.math.BigInteger (java.math.BigInteger/valueOf n)]
+      (if (< n 2)
+        fact
+        (recur (unchecked-dec n) (unchecked-multiply fact n)))))

@@ -74,7 +74,7 @@
                          ,}
             :main-opts  ["-m" "nrepl.cmdline" "-i" "-p" "8000"
                          "--middleware" "[cider.nrepl/cider-middleware]"]
-            :jvm-opts ^:replace ["-Dclojure.core.async.pool-size=48" "-Xmx110g"
+            :jvm-opts ^:replace ["-Dclojure.core.async.pool-size=12" "-Xmx110g"
                                  "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED"]}
 
            :dev-repl/lm001
@@ -118,7 +118,7 @@
                          ,}
             :main-opts  ["-m" "nrepl.cmdline" "-i" "-p" "8000"
                          "--middleware" "[cider.nrepl/cider-middleware]"]
-            :jvm-opts ^:replace ["-Dclojure.core.async.pool-size=10" "-Xmx256g"
+            :jvm-opts ^:replace ["-Dclojure.core.async.pool-size=10" "-Xmx240g"
                                  "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED"]}
 
            :dev-repl/lm001-jmc
