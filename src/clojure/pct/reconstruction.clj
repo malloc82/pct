@@ -223,8 +223,9 @@
                     (async-node/send-downstream node [key local-x])
                     (timbre/info (format "%s%s, (%d) : data sent." _normal_ thread-name iter))
                     (if-let [local-x (async-node/recv-upstream node local-x :end)]
-                      (recur (unchecked-inc iter)
-                             (+ (long (min ell iter)) (long (rand-int (Math/abs (- ell iter))))))
+                      (do ;; (async-node/dump-data node [key (Arrays/copyOf ^doubles local-x data-len)])
+                        (recur (unchecked-inc iter)
+                               (+ (long (min ell iter)) (long (rand-int (Math/abs (- ell iter)))))))
                       (do (timbre/info (format "%s%s, (%d) : stopped, recon incomplete." _term_ thread-name iter)))))
                 (do (timbre/info (format "%s%s, (%d) : done. Sending out local-x" _term_ thread-name iter))
                     (a/put! res [key [local-x (:global-offset node)]])
@@ -287,11 +288,10 @@
 
 (defn head-node-recon
   [thread-name iter ell ^doubles local-x ^pct.async.node.AsyncNode node ^ArrayList cache opts]
-  (let [{slices :slices, in :ch-in, res :ch-out, key :key} node
+  (let [{slices :slices, res :ch-out, key :key} node
         ;; [^long offset-x ^long length ^long offset-local] (:global-offset node)
         dump (-> opts :dump)
         tvs? (:tvs? opts)
-        key  (:key node)
         [^int h-size ^objects shuffled-data ^double lambda  ^double alpha ^long tvs-N] cache]
     (timbre/info (format "%s (%d): start: block [%2d %2d], h-size=%-7d, lambda=%s, tvs=%s"
                          thread-name iter (first slices) (count slices) h-size (. float-format format lambda)
@@ -312,7 +312,7 @@
 
 (defn body-node-recon
   [thread-name iter ^doubles local-x ^pct.async.node.AsyncNode node ^ArrayList cache opts]
-  (let [{in :ch-in, res :ch-out, key :key, slices :slices} node
+  (let [{res :ch-out, key :key, slices :slices} node
         ;; [^long offset-x ^long length ^long offset-local] (:global-offset node)
         [^int h-size ^objects shuffled-data ^double lambda] cache]
     #_(timbre/info (format "%s (%d): start: block [%2d %2d], h-size=%-7d, lambda=%s"

@@ -249,44 +249,44 @@
           x))))
 
   (proj_art-5* [this x lambda]
-    (let [n ^int (alength path)
-          a (loop [i (long 0)
-                   sum (double 0.0)]
-              (if (< i n)
-                (recur (unchecked-inc i)
-                       (+ sum ^double (aget ^doubles x ^int (aget path i))))
-                (* ^double lambda
-                   #_^double (/ (- wepl (* sum chord-len)) (* n chord-len))
-                   ^double (/ (- (/ wepl chord-len) sum) n))))]
+    (let [n (alength path)
+          ^double a (loop [i (long 0)
+                           sum (double 0.0)]
+                      (if (< i n)
+                        (recur (unchecked-inc i)
+                               (+ sum ^double (aget ^doubles x ^int (aget path i))))
+                        (* ^double lambda
+                           #_^double (/ (- wepl (* sum chord-len)) (* n chord-len))
+                           ^double (/ (- (/ wepl chord-len) sum) n))))]
       (loop [k (long 0)]
         (if (< k n)
-          (let [i  ^int    (aget path k)
-                xi ^double (aget ^doubles x i)
+          (let [i  (aget path k)
+                xi (aget ^doubles x i)
                 next-k (unchecked-inc k)]
             (if (= xi 0.0)
               (recur next-k)
-              (do (aset ^doubles x i (+ xi ^double a))
+              (do (aset ^doubles x i (+ xi a))
                   (recur next-k))))
           x))))
 
   (proj_art-6* [this x lambda]
-    (let [n ^int (alength path)
-          a (loop [i (long 0)
-                   sum (double 0.0)]
-              (if (< i n)
-                (recur (unchecked-inc i)
-                       (+ sum ^double (aget ^doubles x ^int (aget path i))))
-                (* ^double lambda
-                   #_^double (/ (- wepl (* sum chord-len)) (* n chord-len))
-                   ^double (/ (- (/ wepl chord-len) sum) n))))]
+    (let [n (alength path)
+          ^double a (loop [i (long 0), sum (double 0.0)]
+                      (if (< i n)
+                        (recur (unchecked-inc i)
+                               (+ sum (aget ^doubles x (aget path i))))
+                        (* ^double lambda
+                           #_^double (/ (- wepl (* sum chord-len)) (* n chord-len))
+                           ^double (/ (- (/ wepl chord-len) sum) n))))]
       (loop [k (long 0)]
         (if (< k n)
-          (let [i  ^int    (aget path k)
-                xi ^double (aget ^doubles x i)
+          (let [i  (aget path k)
+                xi (aget ^doubles x i)
+                ;; v  (+ xi (* a (- 1.0 xi)))
                 next-k (unchecked-inc k)]
             (if (= xi 0.0)
               (recur next-k)
-              (do (aset ^doubles x i (+ xi (* ^double a (- 1 xi))))
+              (do (aset ^doubles x i (+ xi (* a (- 1.0 xi))))
                   (recur next-k))))
           x))))
 

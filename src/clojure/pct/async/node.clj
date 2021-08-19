@@ -70,7 +70,8 @@
   (get-connection-status    [this]                   "get current upstream & downstream connection info as a persistent data")
 
   (send-downstream          [this data]              "send data downstream")
-  (send-upstream            [this data]              "send data upstream")
+  ;; (send-upstream            [this data]              "send data upstream")
+  (send-out                 [this data]              "Send data via output port")
   (recv-upstream            [this x] [this x term]))
 
 (defprotocol IAsyncCommunication
@@ -209,6 +210,9 @@
         (a/put! c data))
       true))
 
+  (send-out [this data]
+    (a/put! ch-out data)
+    true)
 
   (recv-upstream [this x]
     (let [^HashMap connection (.connection upstream)]
