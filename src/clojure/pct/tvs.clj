@@ -21,7 +21,9 @@
 
 
 
-(defn tv [data [^long rows ^long cols ^long slices] & {:keys [v]}]
+(defn tv
+  "Implementation using neanderthal vector"
+  [data [^long rows ^long cols ^long slices] & {:keys [v]}]
   (let [v        (or v (zero data))
         offset   (* rows cols)
         last-idx (dec (dim data))
@@ -54,7 +56,9 @@
       (scal! (/ 1.0 ^double norm_G) v))))
 
 
-(defn tv2 ^doubles [^doubles data [^long rows ^long cols]]
+(defn tv2
+  "Implementation using java double array"
+  ^doubles [^doubles data [^long rows ^long cols]]
   (let [data-len (alength data)
         v        (double-array data-len)
         offset   (* rows cols)
@@ -115,15 +119,14 @@
 
 ;; alpha could be 0.75 or 0.05
 (defn ntvs-slice
-  [^doubles x dim ell
-   & {:keys [alpha N in-place]
-      :or {alpha 0.75 N 5 in-place false}}]
-  (let [len (alength x)
+  [^doubles x dim ell & {:keys [alpha N in-place] :or {alpha 0.75 N 5 in-place false}}]
+  (let [[^long rows ^long cols] dim
+        len (* rows cols)
         last-ell (+ ^long ell ^long N)
-        x ^doubles (if in-place x (java.util.Arrays/copyOf x len))]
+        ^doubles x (if in-place x (java.util.Arrays/copyOf x len))]
     (loop [ell ^long ell]
       (if (< ell last-ell)
-        (let [v ^doubles (tv2 x dim)
+        (let [v (tv2 x dim)
               a (Math/pow ^double alpha ^long ell)]
           #_(println ell)
           (dotimes [i len]
@@ -134,11 +137,10 @@
 
 (defn ntvs-ell-seq [^long K ^long N]
   (let [ell 0]
-    (loop [k 0
-           ell 0]
+    (loop [k 0, ell 0]
       (if (< k K)
         (let [ell_next (+ (long (min ell k)) (long (rand-int (Math/abs (- ell k)))))]
           (println (format "iteration %2d: rand(%2d, %2d)  -> %2d" k k ell ell_next))
-          (recur (inc k) (+ ell_next N)))))))
+          (recur (unchecked-inc k) (unchecked-add ell_next N)))))))
 
 

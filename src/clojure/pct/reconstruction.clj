@@ -373,13 +373,17 @@
                 #_(timbre/info (format "%s: end of iter %d" thread-name iter))
                 (recur (unchecked-inc iter)
                        (+ (long (min ell iter)) (long (rand-int (Math/abs (- ell iter)))))))
-            (do (timbre/info (format "%s: done. Waiting for final iter" thread-name))
-                (async-node/recv-upstream head-node local-x)
-                (timbre/info (format "%s: %s done." thread-name (:slices head-node)))
-                (let [out (:ch-out head-node)
-                      key (:key    head-node)]
-                  (a/put! out [key [local-x (:global-offset head-node)]])
-                  (a/put! out [:end key])))))))))
+            (let [final-ell (+ (long (min ell iter)) (long (rand-int (Math/abs (- ell iter)))))
+                  ^doubles local-x (if tvs?
+                                     (pct.tvs/ntvs-slice local-x [rows cols] final-ell :alpha alpha :N tvs-N :in-place true)
+                                     local-x)]
+              (timbre/info (format "%s: done. Waiting for final iter" thread-name))
+              (async-node/recv-upstream head-node local-x)
+              (timbre/info (format "%s: %s done." thread-name (:slices head-node)))
+              (let [out (:ch-out head-node)
+                    key (:key    head-node)]
+                (a/put! out [key [local-x (:global-offset head-node)]])
+                (a/put! out [:end key])))))))))
 
 
 (defn async-art-blocked [^pct.async.node.AsyncGrid grid ^pct.data.HistoryIndex global-index ^RealBlockVector init-x opts]
