@@ -41,6 +41,52 @@
                                  [0 1 1 1 1 1 0]
                                  [0 0 1 1 1 0 0]]))
 
+
+;; coordinates are top left pixel
+;; measured on slice 7
+(defonce CTP404-regions {:teflon      [[119 150] 1.790]
+                         :PMP         [[154 103] 0.883]
+                         :LDPE        [[132  50] 0.979]
+                         :polystyrene [[ 74  42] 1.024]
+                         :delrin      [[ 61 143] 1.359]
+                         ;; :acrylic     [[      ]  1.160] ;; outer shell
+                         :air-top     [[ 49  61] 0.00113]
+                         :air-bottom  [[143 132] 0.00113]})
+
+(def ^:private CTP404-mask (dge [[0 0 1 1 1 0 0]
+                                 [0 1 1 1 1 1 0]
+                                 [1 1 1 1 1 1 1]
+                                 [1 1 1 1 1 1 1]
+                                 [1 1 1 1 1 1 1]
+                                 [0 1 1 1 1 1 0]
+                                 [0 0 1 1 1 0 0]]))
+
+;; coordinates are top left pixel
+;; measured on slice 33
+(defonce George-regions {:dental-enamel   [[ 35  97]  1.755]
+                         :dental-dentin   [[ 55  49]  1.495]
+                         :cortical-bone   [[105  35]  1.555]
+                         :trabecular-bone [[147  66]  1.100]
+                         :spinal-cord     [[150 118]  1.040]
+                         :spinal-disc     [[111 152]  1.070]
+                         :brain-tissue    [[ 60 143]  1.040]
+                         :sinus           [[ 86  65]  0.220]
+                         #_#_:blue-wax        [[] 0.980]})
+
+
+(def ^:private George-mask (dge [[0 0 0 1 1 1 1 0 0 0]
+                                 [0 0 1 1 1 1 1 1 0 0]
+                                 [0 1 1 1 1 1 1 1 1 0]
+                                 [1 1 1 1 1 1 1 1 1 1]
+                                 [1 1 1 1 1 1 1 1 1 1]
+                                 [1 1 1 1 1 1 1 1 1 1]
+                                 [1 1 1 1 1 1 1 1 1 1]
+                                 [0 1 1 1 1 1 1 1 1 0]
+                                 [0 0 1 1 1 1 1 1 0 0]
+                                 [0 0 0 1 1 1 1 0 0 0]]))
+
+
+
 ;; (def data-dir "/local/cair/dev/cells/resources/result/")
 ;; (def sample-set "async_run_Tuesday_9_ART_median_filter_lambda=0.001000,chunk-size=1000000,[-3,3]")
 ;; (def sample-x (load-vctr (s/join "/" [data-dir sample-set "x_6_9.txt"]) (fv 40000)))
