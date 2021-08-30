@@ -307,6 +307,7 @@
 
 
 (defn dataset-dimension
+  "Given dataset folder and dataset file pattern, return [rows cols slices]"
   [^String folder ^java.util.regex.Pattern pattern]
   (let [slices (find-slices folder pattern)]
     (when (not (empty? slices))
@@ -533,14 +534,19 @@
 
 
 (defn export-plot-data [data path]
-  (with-open [f (clojure.java.io/writer path)]
-    (.write f (generate-string (-> data
-                                   (#(if (:date %)     % (assoc % :date     (pct.util.system/timestamp))))
-                                   (#(if (:hostname %) % (assoc % :hostname (pct.util.system/hostname)))))
-                               {:pretty true
-                                :key-fn #(if (clojure.core/keyword? %)
-                                               (clojure.core/name %)
-                                               (clojure.core/str %))}))))
+  (let [^java.io.File fout   (clojure.java.io/file path)
+        ^java.io.File folder (.getParentFile fout)]
+    (assert (not (.exists fout)) (format "File exists: %s" path))
+    (when (or folder (not (.exists folder)))
+      (.mkdirs folder))
+    (with-open [f (clojure.java.io/writer path)]
+      (.write f (generate-string (-> data
+                                     (#(if (:date %)     % (assoc % :date     (pct.util.system/timestamp))))
+                                     (#(if (:hostname %) % (assoc % :hostname (pct.util.system/hostname)))))
+                                 {:pretty true
+                                  :key-fn #(if (clojure.core/keyword? %)
+                                             (clojure.core/name %)
+                                             (clojure.core/str %))})))))
 
 
 (defn load-plot-data
@@ -556,21 +562,21 @@
 (defn save-series
   "Save series, as well as recon parameters if given"
   ([^RealBlockVector x  rows  cols slices]
-   (save-series x rows cols slices {}))
-  ([^RealBlockVector x  rows  cols slices recon-opts]
-   (save-series x rows cols slices recon-opts {:type :txt}))
-  ([^RealBlockVector x  rows  cols slices recon-opts opts]
-   (let [timestamp (pct.util.system/timestamp)
-         hostname  (pct.util.system/hostname)
-         slice-offset (* (long rows) (long cols))
+   (save-series x rows cols slices {:type :txt}))
+  ([^RealBlockVector x  rows  cols slices opts]
+   (let [slice-offset (* (long rows) (long cols))
          output_type (or (:type opts) :txt)
-         iter (if-let [iter (:iterations recon-opts)] (long iter) 0)
-         folder (format "%s/%s"
-                        (if-let [folder (:folder opts)] folder ".")
-                        (format "%s_%s" hostname timestamp))]
+         ^String iter (if-let [i (:iter opts)]
+                        (format "%02d" i) "?")
+         #_#_iter (if-let [iter (:iterations recon-opts)] (long iter) 0)
+         ^String folder (or (:folder opts)
+                            (let [timestamp (pct.util.system/timestamp)
+                                  hostname  (pct.util.system/hostname)]
+                              (format "%s_%s" hostname timestamp)))]
      (.mkdirs (java.io.File. folder))
      ;; write recon-opts
-     (save-recon-opts recon-opts folder)
+     (when-let [recon-opts (:recon-opts opts)]
+       (save-recon-opts recon-opts folder))
      #_(with-open [f (clojure.java.io/writer (format "%s/%s" folder "recon_config.json"))]
          (let [recon-opts (-> recon-opts
                               (#(if (:date %)     % (assoc % :date     timestamp)))
@@ -582,19 +588,35 @@
                                                         (str k)))}))))
      (case output_type
        :txt (do (dotimes [i slices]
-                  (save-x-txt (subvector x (* i slice-offset) slice-offset) rows cols (format "x_%d_%d" iter i) :folder folder))
+                  (save-x-txt (subvector x (* i slice-offset) slice-offset) rows cols (format "x_%s_%03d" iter i) :folder folder))
                 true)
        :img (do (dotimes [i slices]
-                  (save-x-img (subvector x (* i slice-offset) slice-offset) rows cols (format "x_%d_%d" iter i) :folder folder))
+                  (save-x-img (subvector x (* i slice-offset) slice-offset) rows cols (format "x_%s_%03d" iter i) :folder folder))
                 true)
        :all (do (dotimes [i slices]
-                  (let [name (format "x_%d_%d" iter i)]
+                  (let [name (format "x_%s_%03d" iter i)]
                     (save-x-txt (subvector x (* i slice-offset) slice-offset) rows cols name :folder folder)
                     (save-x-img (subvector x (* i slice-offset) slice-offset) rows cols name :folder folder)))
                 true)
        (let [msg (format "Unknown type: %s. Nothing to do here." (str output_type))]
          (println msg)
          (timbre/info msg))))))
+
+
+(defn save-result
+  [^HashMap results rows cols slices recon-opts opts]
+  (let [^String folder (let [timestamp (pct.util.system/timestamp)
+                             hostname  (pct.util.system/hostname)]
+                         (format "%s/%s_%s" (or (:folder opts) ".") hostname timestamp))]
+    (.mkdirs (java.io.File. folder))
+    (save-recon-opts recon-opts folder)
+    (doseq [[i [x s]] results]
+      (save-series x rows cols slices
+                   (-> opts
+                       (assoc  :iter i)
+                       (assoc  :folder folder)
+                       (dissoc :recon-opts))))))
+
 
 (comment
   ;; read config using clojure.data

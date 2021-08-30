@@ -19,7 +19,7 @@
             [uncomplicate.neanderthal.internal.host
              [mkl :as mkl]]
             [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]])
-  (:import [java.util ArrayList Iterator Arrays Collections HashMap]
+  (:import [java.util ArrayList Iterator Arrays Collections HashMap TreeSet]
            [uncomplicate.neanderthal.internal.host.buffer_block IntegerBlockVector RealBlockVector]
            [java.text DecimalFormat]))
 
@@ -217,7 +217,9 @@
                                      (pct.tvs/ntvs-slice local-x [rows cols] ell :alpha alpha :N tvs-N :in-place true)
                                      local-x)]
               (if (< iter iterations)
-                (do (dotimes [i h-size]
+                (do (when (and dump (< 0 iter))
+                      (async-node/send-out node [key [iter (Arrays/copyOf ^doubles local-x data-len) (:global-offset node)]]))
+                    (dotimes [i h-size]
                       (pct.data/proj_art-5* ^pct.data.ProtonHistory (aget ^objects shuffled-data i) local-x lambda))
                     ;; (a/>!! out [key (Arrays/copyOf ^doubles local-x data-len)])
                     (async-node/send-downstream node [key local-x])
@@ -228,8 +230,10 @@
                                (+ (long (min ell iter)) (long (rand-int (Math/abs (- ell iter)))))))
                       (do (timbre/info (format "%s%s, (%d) : stopped, recon incomplete." _term_ thread-name iter)))))
                 (do (timbre/info (format "%s%s, (%d) : done. Sending out local-x" _term_ thread-name iter))
-                    (a/put! res [key [local-x (:global-offset node)]])
-                    (a/put! res [:end key])
+                    (async-node/send-out node [key [iter local-x (:global-offset node)]])
+                    (async-node/send-out node [:end key])
+                    ;; (a/put! res [key [local-x (:global-offset node)]])
+                    ;; (a/put! res [:end key])
                     (async-node/send-downstream node [:end key])
                     (let [_ (recv-upstream node local-x :end)]
                       (timbre/info (format "%s%s, all done." _term_ thread-name)))))))))
@@ -276,7 +280,7 @@
           (timbre/info (format "%s%s: start forwarding." _warning_ thread-name))
           (loop []
             (if-let [[k v] (a/<! in)]
-              (if (= k :stop)
+              (if (= k :end)
                 (do (timbre/info (format "%s%s: stop forwarding." _term_ thread-name)) nil)
                 (do #_(a/>! out [key v])
                     (async-node/send-downstream node [key v])
@@ -391,21 +395,48 @@
            (spec/valid? (spec/and pos? int?) iter)
            true)]
    :post []}
-  (async-node/distribute-all grid block-recon [global-index init-x (dissoc opts :dump)])
-  (let [res-ch (async-node/collect-data grid)
+  (async-node/distribute-all grid block-recon [global-index init-x opts #_(dissoc opts :dump)])
+  (let [res-ch       (async-node/collect-data grid)
         slice-offset (long (pct.data/slice-size* global-index))
-        final-x ^RealBlockVector (zero init-x)]
+        ;; ^RealBlockVector final-x (zero init-x)
+        ^HashMap results (let [^HashMap m (HashMap.)
+                               ^long    n (:iterations opts)]
+                           (if (:dump opts)
+                             (dotimes [i n]
+                               (.put m (inc i) [(zero init-x) (TreeSet.)]))
+                             (.put m n [(zero init-x) (TreeSet.)]))
+                           m)]
     (loop []
-      (if-let [[k msg] (a/<!! res-ch)]
-        (let [n (count msg)]
-          (if (= n 2)
+      (if-let [[^clojure.lang.Keyword k msg] (a/<!! res-ch)]
+        (let [[^long iter ^doubles arr [^long global-offset ^long len ^long local-offset]] msg
+              [^RealBlockVector x ^TreeSet slices] (or (.get results iter)
+                                                       (let [_v [(zero init-x) (TreeSet.)]]
+                                                         (.put results iter _v)
+                                                         _v))
+              v (subvector x (* global-offset slice-offset) slice-offset)]
+          (transfer! arr v)
+          (.add slices global-offset)
+          (recur))
+        #_(let [n (count msg)]
+          (cond
+
+            (= n 2)
             (let [[^doubles arr [^long global-offset ^long len _]] msg
                   v (subvector final-x (* global-offset slice-offset) (* len slice-offset))]
               (transfer! arr v)
               (recur))
+
+            (= n 3)
+            (let [[^long iter ^doubles arr [^long global-offset ^long len ^long local-offset]] msg
+                  [^RealBlockVector x slices] (or (get acc iter) [(zero init-x) (sorted-set)])
+                  v (subvector x (* global-offset slice-offset) slice-offset)]
+              (transfer! arr v)
+              (recur (assoc! acc iter [x (set/union slices (-> grid k :slices))])))
+
+            :else
             (do (println (format "Message format is wrong, expect n=2, got n=%d. Skip." n))
                 (recur))))
-        final-x))))
+        results))))
 
 
 (defn async-art-threaded [^pct.async.node.AsyncGrid grid ^pct.data.HistoryIndex global-index ^RealBlockVector init-x opts]
