@@ -265,8 +265,11 @@
                 next-k (unchecked-inc k)]
             (if (= xi 0.0)
               (recur next-k)
-              (do (aset ^doubles x i (+ xi a))
-                  (recur next-k))))
+              (let [v (+ xi a)]
+                (if (< 0.0 v)
+                  (aset ^doubles x i 0.0)
+                  (aset ^doubles x i (+ xi a)))
+                (recur next-k))))
           x))))
 
   (proj_art-6* [this x lambda]
@@ -1023,3 +1026,18 @@
                      (if global? true false)
                      (if x0 (copy x0) (dv (* rows cols slices)))))))
 
+
+
+(defn ProtonDistribution
+  [^HistoryIndex index]
+  (->> (.index index)
+       (map-indexed (fn [i s]
+                      [i (let [v (mapv (fn [x] (count (first x))) s)]
+                           (loop [i (dec (count v))]
+                             (if (<= 0 i)
+                               (if (< 0 ^int (v i))
+                                 (subvec v 0 (+ i 2))
+                                 (recur (unchecked-dec i)))
+                               [])))]))
+       (filterv (fn [[_ col]] (not (empty? col))))
+       (into (sorted-map))))
