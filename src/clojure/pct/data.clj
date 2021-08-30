@@ -266,13 +266,35 @@
             (if (= xi 0.0)
               (recur next-k)
               (let [v (+ xi a)]
+                #_(aset ^doubles x i v)
                 (if (< 0.0 v)
-                  (aset ^doubles x i 0.0)
-                  (aset ^doubles x i (+ xi a)))
+                  (aset ^doubles x i v)
+                  (aset ^doubles x i 0.0))
                 (recur next-k))))
           x))))
 
   (proj_art-6* [this x lambda]
+    (let [n (alength path)
+          ^double a (loop [i (long 0)
+                           sum (double 0.0)]
+                      (if (< i n)
+                        (recur (unchecked-inc i)
+                               (+ sum ^double (aget ^doubles x ^int (aget path i))))
+                        (* ^double lambda
+                           #_^double (/ (- wepl (* sum chord-len)) (* n chord-len))
+                           ^double (/ (- (/ wepl chord-len) sum) n))))]
+      (loop [k (long 0)]
+        (if (< k n)
+          (let [i  (aget path k)
+                xi (aget ^doubles x i)
+                next-k (unchecked-inc k)]
+            (if (= xi 0.0)
+              (recur next-k)
+              (do (aset ^doubles x i (+ xi a))
+                  (recur next-k))))
+          x))))
+
+  (proj_art-7* [this x lambda]
     (let [n (alength path)
           ^double a (loop [i (long 0), sum (double 0.0)]
                       (if (< i n)
