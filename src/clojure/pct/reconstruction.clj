@@ -8,6 +8,7 @@
             [clojure.set :as set]
             [pct.common :refer [with-out-str-data-map]]
             [pct.util.prime :as prime]
+            [pct.util.system :refer [timestamp hostname]]
             [taoensso.timbre :as timbre]
             [uncomplicate.neanderthal
              [core :refer :all]
@@ -395,48 +396,54 @@
            (spec/valid? (spec/and pos? int?) iter)
            true)]
    :post []}
-  (async-node/distribute-all grid block-recon [global-index init-x opts #_(dissoc opts :dump)])
-  (let [res-ch       (async-node/collect-data grid)
-        slice-offset (long (pct.data/slice-size* global-index))
-        ;; ^RealBlockVector final-x (zero init-x)
-        ^HashMap results (let [^HashMap m (HashMap.)
-                               ^long    n (:iterations opts)]
-                           (if (:dump opts)
-                             (dotimes [i n]
-                               (.put m (inc i) [(zero init-x) (TreeSet.)]))
-                             (.put m n [(zero init-x) (TreeSet.)]))
-                           m)]
-    (loop []
-      (if-let [[^clojure.lang.Keyword k msg] (a/<!! res-ch)]
-        (let [[^long iter ^doubles arr [^long global-offset ^long len ^long local-offset]] msg
-              [^RealBlockVector x ^TreeSet slices] (or (.get results iter)
-                                                       (let [_v [(zero init-x) (TreeSet.)]]
-                                                         (.put results iter _v)
-                                                         _v))
-              v (subvector x (* global-offset slice-offset) slice-offset)]
-          (transfer! arr v)
-          (.add slices global-offset)
-          (recur))
-        #_(let [n (count msg)]
-          (cond
 
-            (= n 2)
-            (let [[^doubles arr [^long global-offset ^long len _]] msg
-                  v (subvector final-x (* global-offset slice-offset) (* len slice-offset))]
-              (transfer! arr v)
-              (recur))
+  (let [__start (System/nanoTime)]
+    (async-node/distribute-all grid block-recon [global-index init-x opts #_(dissoc opts :dump)])
+    (let [res-ch       (async-node/collect-data grid)
+          slice-offset (long (pct.data/slice-size* global-index))
+          ;; ^RealBlockVector final-x (zero init-x)
+          ^HashMap results (let [^HashMap m (HashMap.)
+                                 ^long    n (:iterations opts)]
+                             (if (:dump opts)
+                               (dotimes [i n]
+                                 (.put m (inc i) [(zero init-x) (TreeSet.)]))
+                               (.put m n [(zero init-x) (TreeSet.)]))
+                             m)]
+      (loop []
+        (if-let [[^clojure.lang.Keyword k msg] (a/<!! res-ch)]
+          (let [[^long iter ^doubles arr [^long global-offset ^long len ^long local-offset]] msg
+                [^RealBlockVector x ^TreeSet slices] (or (.get results iter)
+                                                         (let [_v [(zero init-x) (TreeSet.)]]
+                                                           (.put results iter _v)
+                                                           _v))
+                v (subvector x (* global-offset slice-offset) slice-offset)]
+            (transfer! arr v)
+            (.add slices global-offset)
+            (recur))
+          #_(let [n (count msg)]
+              (cond
 
-            (= n 3)
-            (let [[^long iter ^doubles arr [^long global-offset ^long len ^long local-offset]] msg
-                  [^RealBlockVector x slices] (or (get acc iter) [(zero init-x) (sorted-set)])
-                  v (subvector x (* global-offset slice-offset) slice-offset)]
-              (transfer! arr v)
-              (recur (assoc! acc iter [x (set/union slices (-> grid k :slices))])))
+                (= n 2)
+                (let [[^doubles arr [^long global-offset ^long len _]] msg
+                      v (subvector final-x (* global-offset slice-offset) (* len slice-offset))]
+                  (transfer! arr v)
+                  (recur))
 
-            :else
-            (do (println (format "Message format is wrong, expect n=2, got n=%d. Skip." n))
-                (recur))))
-        results))))
+                (= n 3)
+                (let [[^long iter ^doubles arr [^long global-offset ^long len ^long local-offset]] msg
+                      [^RealBlockVector x slices] (or (get acc iter) [(zero init-x) (sorted-set)])
+                      v (subvector x (* global-offset slice-offset) slice-offset)]
+                  (transfer! arr v)
+                  (recur (assoc! acc iter [x (set/union slices (-> grid k :slices))])))
+
+                :else
+                (do (println (format "Message format is wrong, expect n=2, got n=%d. Skip." n))
+                    (recur))))
+          (let [__end (System/nanoTime)]
+            (.put results :properties {:runtime   (format "%.4f ms" (/ (double (- __end __start)) 1000000))
+                                       :hostname  (hostname)
+                                       :timestamp (timestamp)})
+            results))))))
 
 
 (defn async-art-threaded [^pct.async.node.AsyncGrid grid ^pct.data.HistoryIndex global-index ^RealBlockVector init-x opts]

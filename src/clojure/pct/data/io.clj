@@ -513,7 +513,7 @@
 (defn save-recon-opts [recon-opts folder & {:keys [name]}]
   (let [fname (format "%s/%s" folder (or name "recon_config.json"))]
     (with-open [f (clojure.java.io/writer fname)]
-      (let [recon-opts (-> recon-opts
+      (let [#_#_recon-opts (-> recon-opts
                            (#(if (:date %)     % (assoc % :date     (pct.util.system/timestamp))))
                            (#(if (:hostname %) % (assoc % :hostname (pct.util.system/hostname)))))]
         (.write f (generate-string recon-opts
@@ -605,17 +605,21 @@
 
 (defn save-result
   [^HashMap results rows cols slices recon-opts opts]
-  (let [^String folder (let [timestamp (pct.util.system/timestamp)
-                             hostname  (pct.util.system/hostname)]
-                         (format "%s/%s_%s" (or (:folder opts) ".") hostname timestamp))]
-    (.mkdirs (java.io.File. folder))
-    (save-recon-opts recon-opts folder)
-    (doseq [[i [x s]] results]
-      (save-series x rows cols slices
-                   (-> opts
-                       (assoc  :iter i)
-                       (assoc  :folder folder)
-                       (dissoc :recon-opts))))))
+  (let [^String folder (let [timestamp (or (-> results :properties :timestamp) (pct.util.system/timestamp))
+                             hostname  (or (-> results :properties :hostname)  (pct.util.system/hostname))]
+                         (format "%s/%s_%s" (or (:folder opts) ".") hostname timestamp))
+        folder_f (java.io.File. folder)]
+    (if (.exists folder_f)
+      (println (format "Folder %s already exists, results probably already saved. skip." folder))
+      (do (.mkdirs folder_f)
+          (save-recon-opts (assoc recon-opts :properties (.get results :properties)) folder)
+          (doseq [[k v] results]
+            (when (int? k)
+              (save-series (first v) rows cols slices
+                           (-> opts
+                               (assoc  :iter k)
+                               (assoc  :folder folder)
+                               (dissoc :recon-opts)))))))))
 
 
 (comment
