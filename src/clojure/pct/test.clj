@@ -13,8 +13,9 @@
             [uncomplicate.neanderthal.internal.host
              [mkl :as mkl]]
             [uncomplicate.commons.core :refer [release with-release releaseable? let-release info]]
-            [pct.io :refer [load-vctr load-series save-x save-series]]
-            ))
+            [pct.data.io :refer [load-vctr load-series #_#_save-x save-series]]
+            )
+  (:import [uncomplicate.neanderthal.internal.host.buffer_block IntegerBlockVector RealBlockVector RealGEMatrix]))
 
 
 ;; From Paniz
@@ -41,200 +42,170 @@
                                  [0 1 1 1 1 1 0]
                                  [0 0 1 1 1 0 0]]))
 
+(defprotocol IRegionStat
+  (mean*  [this slice])
+  (std*   [this slice])
+  (error* [this slice]))
+
+
+(defrecord RecRegion [^long x ^long y ^long cols ^long rows ^long n ^RealGEMatrix mask ^double expected]
+  IRegionStat
+  (mean* [this slice]
+    (let [area (fmap #(* ^double %1 (double %2)) (submatrix slice x y cols rows) mask)]
+      (/ ^double (sum area) n)))
+  (std* [this slice]
+    (let [area  (fmap #(* ^double %1 (double %2)) (submatrix slice x y cols rows) mask)
+          _mean (/ ^double (sum area) n)]
+      (math/sqrt (/ ^double (dot (fmap #(math/sqr (- ^double % _mean)) area) mask) n))))
+  (error* [this slice]
+    (let [^double _mean (mean* this slice)]
+      (- _mean expected))))
+
+
+(defn newRecRegion [^long x ^long y ^RealGEMatrix mask ^double expected]
+  (->RecRegion x y (ncols mask) (mrows mask) (sum mask) mask expected))
 
 ;; coordinates are top left pixel
 ;; measured on slice 7
-(defonce CTP404-regions {:teflon      [[119 150] 1.790]
-                         :PMP         [[154 103] 0.883]
-                         :LDPE        [[132  50] 0.979]
-                         :polystyrene [[ 74  42] 1.024]
-                         :delrin      [[ 61 143] 1.359]
-                         ;; :acrylic     [[      ]  1.160] ;; outer shell
-                         :air-top     [[ 49  61] 0.00113]
-                         :air-bottom  [[143 132] 0.00113]})
 
-(def ^:private CTP404-mask (dge [[0 0 1 1 1 0 0]
-                                 [0 1 1 1 1 1 0]
-                                 [1 1 1 1 1 1 1]
-                                 [1 1 1 1 1 1 1]
-                                 [1 1 1 1 1 1 1]
-                                 [0 1 1 1 1 1 0]
-                                 [0 0 1 1 1 0 0]]))
+(def CTP404-mask (trans (dge [[0 0 1 1 1 0 0]
+                              [0 1 1 1 1 1 0]
+                              [1 1 1 1 1 1 1]
+                              [1 1 1 1 1 1 1]
+                              [1 1 1 1 1 1 1]
+                              [0 1 1 1 1 1 0]
+                              [0 0 1 1 1 0 0]])))
 
-;; coordinates are top left pixel
-;; measured on slice 33
-(defonce George-regions {:dental-enamel   [[ 35  97]  1.755]
-                         :dental-dentin   [[ 55  49]  1.495]
-                         :cortical-bone   [[105  35]  1.555]
-                         :trabecular-bone [[147  66]  1.100]
-                         :spinal-cord     [[150 118]  1.040]
-                         :spinal-disc     [[111 152]  1.070]
-                         :brain-tissue    [[ 60 143]  1.040]
-                         :sinus           [[ 86  65]  0.220]
-                         #_#_:blue-wax        [[] 0.980]})
-
-
-(def ^:private George-mask (dge [[0 0 0 1 1 1 1 0 0 0]
-                                 [0 0 1 1 1 1 1 1 0 0]
-                                 [0 1 1 1 1 1 1 1 1 0]
-                                 [1 1 1 1 1 1 1 1 1 1]
-                                 [1 1 1 1 1 1 1 1 1 1]
-                                 [1 1 1 1 1 1 1 1 1 1]
-                                 [1 1 1 1 1 1 1 1 1 1]
-                                 [0 1 1 1 1 1 1 1 1 0]
-                                 [0 0 1 1 1 1 1 1 0 0]
-                                 [0 0 0 1 1 1 1 0 0 0]]))
+(def acrylic-vertical-mask (trans (dge [[0 0 1 0 0]
+                                        [0 1 1 1 0]
+                                        [0 1 1 1 0]
+                                        [1 1 1 1 1]
+                                        [1 1 1 1 1]
+                                        [1 1 1 1 1]
+                                        [1 1 1 1 1]
+                                        [1 1 1 1 1]
+                                        [1 1 1 1 1]
+                                        [1 1 1 1 1]
+                                        [1 1 1 1 1]
+                                        [1 1 1 1 1]
+                                        [1 1 1 1 1]
+                                        [1 1 1 1 1]
+                                        [1 1 1 1 1]
+                                        [0 1 1 1 0]
+                                        [0 1 1 1 0]
+                                        [0 0 1 0 0]])))
 
 
+(def acrylic-horizontal-mask (trans (dge [[0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0]
+                                          [0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0]
+                                          [1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1]
+                                          [0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0]
+                                          [0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0]])))
 
-;; (def data-dir "/local/cair/dev/cells/resources/result/")
-;; (def sample-set "async_run_Tuesday_9_ART_median_filter_lambda=0.001000,chunk-size=1000000,[-3,3]")
-;; (def sample-x (load-vctr (s/join "/" [data-dir sample-set "x_6_9.txt"]) (fv 40000)))
+(def George-mask (trans (dge [[0 0 0 1 1 1 1 0 0 0]
+                              [0 0 1 1 1 1 1 1 0 0]
+                              [0 1 1 1 1 1 1 1 1 0]
+                              [1 1 1 1 1 1 1 1 1 1]
+                              [1 1 1 1 1 1 1 1 1 1]
+                              [1 1 1 1 1 1 1 1 1 1]
+                              [1 1 1 1 1 1 1 1 1 1]
+                              [0 1 1 1 1 1 1 1 1 0]
+                              [0 0 1 1 1 1 1 1 0 0]
+                              [0 0 0 1 1 1 1 0 0 0]])))
 
-#_(def sample-series (load-series (format "%s/%s/x" data-dir sample-set) :iter 6 :slices 15))
+(def CTP404-regions {:teflon         (newRecRegion 119 150 CTP404-mask 1.790)
+                     :PMP            (newRecRegion 154 103 CTP404-mask 0.883)
+                     :LDPE           (newRecRegion 132  50 CTP404-mask 0.979)
+                     :polystyrene    (newRecRegion  74  42 CTP404-mask 1.024)
+                     :delrin         (newRecRegion  61 143 CTP404-mask 1.359)
+                     :air-top        (newRecRegion  49  61 CTP404-mask 0.00113)
+                     :air-bottom     (newRecRegion 143 132 CTP404-mask 0.00113)
+                     :acrylic-left   (newRecRegion  26  91 acrylic-vertical-mask 1.160)
+                     :acrylic-right  (newRecRegion 169  91 acrylic-vertical-mask 1.160)
+                     :acrylic-top    (newRecRegion  91  26 acrylic-vertical-mask 1.160)
+                     :acrylic-bottom (newRecRegion  91 169 acrylic-vertical-mask 1.160)
+                     })
 
- ;; number of ones: (- 49 12) => 37
+(def George-regions {:dental-enamel   (newRecRegion  35  97 George-mask 1.755)
+                     :dental-dentin   (newRecRegion  55  49 George-mask 1.495)
+                     :cortical-bone   (newRecRegion 105  35 George-mask 1.555)
+                     :trabecular-bone (newRecRegion 147  66 George-mask 1.100)
+                     :spinal-cord     (newRecRegion 150 118 George-mask 1.040)
+                     :spinal-disc     (newRecRegion 111 152 George-mask 1.070)
+                     :brain-tissue    (newRecRegion  60 143 George-mask 1.040)
+                     :sinus           (newRecRegion  86  65 George-mask 0.220)
+                     #_#_:blue-wax        [[] 0.980]})
 
-(defn region-stat [source-vctr material #_[[x y] radius] & {:keys [rows cols] :or {rows 200 cols 200}}]
-  (assert (target-regions material) (format "Error: unknow material %s %s" material target-regions))
-  (let [[[x y] radius & _] (material target-regions)
-        len  (inc (* radius 2))
-        m    (trans (view-ge source-vctr rows cols))
-        area (copy! (submatrix m  (- y radius)  (- x radius) len len) (ge mkl/mkl-double len len))
-        _ (fmap! #(* %1 %2) area region-mask)
-        mean (/ (sum area) 37.0)
-        std  (math/sqrt (/ (dot (fmap #(math/sqr (- % mean)) area) region-mask) 36.0))
-        v    (view-vctr area)
-        max  (v (imax v))
-        m    (let [_data (filterv #(not= % 0.0) v)]
-               (if (empty? _data)
-                 0.0
-                 (apply min _data)))]
-    {:mean mean :std std :max max :min m}))
-
-
-(defn slice-stat [source-vctr & {:keys [rows cols regions]
-                                 :or {rows 200
-                                      cols 200
-                                      regions (keys target-regions)}}]
-  (transduce (map #(vector % (region-stat source-vctr %)))
-             (fn
-               ([acc] acc)
-               ([acc [k v]]
-                (assoc acc k v)))
-             {}
-             regions))
-
-
-(defn series-stat [series & {:keys [rows cols regions selection]
-                             :or {rows 200
-                                  cols 200
-                                  regions (keys target-regions)}}]
-  (let [offset (* rows cols)
-        n (/ (dim series) offset)
-        selection (if selection (set selection) nil)]
-    (transduce (comp (filter #(if selection
-                                (and (>= % 0) (< % n)
-                                     (selection %))
-                                true))
-                     (map #(vector % (subvector series (* % offset) offset))))
-               (fn
-                 ([acc] acc)
-                 ([acc [i v]]
-                  (assoc acc i (slice-stat v :rows rows :cols cols :regions regions))))
-               (sorted-map)
-               (range n))))
-
-
-(defn dump-slice-error-header
-  "x0 is just one slice"
-  [^String filename & {:keys [rows cols regions init-x]
-                  :or {rows 200
-                       cols 200
-                       regions (keys target-regions)}}]
-  (let [folder (.getParentFile (java.io.File. filename))]
-    ;; (timbre/info "dump-slice-error-header: filename = " filename)
-    ;; (timbre/info "dump-slice-error-header: folder = " folder)
-    (when (and folder (not (.exists folder)))
-      (.mkdirs folder))
-    (with-open [w (clojure.java.io/writer filename :append false)]
-      (.write w (format "iteration,%s\n" (s/join "," (map #(format "%s,error" (str %)) regions))))
-      (.write w (format "TrueValue,%s\n" (s/join "," (map #(format "%.3f,---" (get-in target-regions [% 2])) regions))))
-      (when init-x
-        (let [s-stat (slice-stat init-x :rows rows :cols cols :regions regions)]
-          (.write w (format "0,%s\n" (s/join "," (map #(let [m (:mean (s-stat %))
-                                                             t (get-in target-regions [% 2])]
-                                                         (format "%.5f,%.2f%%" m (* (/ (- m t) t) 100.0)))
-                                                      regions)))))))))
-
-
-(defn dump-slice-error [filename xi iter & {:keys [rows cols regions]
-                                            :or {rows 200
-                                                 cols 200
-                                                 regions (keys target-regions)}}]
-  (let [s-stat (slice-stat xi :rows rows :cols cols :regions regions)]
-    (with-open [w (clojure.java.io/writer filename :append true)]
-      (.write w (format "%d,%s\n" iter (s/join "," (map #(let [m (:mean (s-stat %))
-                                                               t (get-in target-regions [% 2])]
-                                                           (format "%.5f,%.2f%%" m (* (/ (- m t) t) 100.0)))
-                                                        regions)))))))
-
-
-(defn save-slice-progression [^String folder prefix slice-id & {:keys [iterations] :or {iterations 6}}]
-  (if (.exists (java.io.File. folder))
-    (let [region-names (keys target-regions)]
-      (let-release [m (dv 40000)]
-        (with-open [w (clojure.java.io/writer (format "%s/%s_%d_%d_error_progression.csv" folder prefix iterations slice-id))]
-          (.write w (format "%s\n" (s/join "," (conj (map str region-names) "iteration"))))
-          (.write w (format "%s\n" (s/join "," (conj (map #(get-in target-regions [% 2]) region-names) "True Value"))))
-          (dotimes [i iterations]
-            (let [fname (format "%s/%s_%d_%d.txt" folder prefix (inc i) slice-id)]
-              (when (.exists (java.io.File. fname))
-                (println "reading " fname )
-                (.write w (format "%s\n" (s/join "," (conj (map #(format "%.3f" (:mean (region-stat (load-vctr fname m) %)))
-                                                                region-names)
-                                                           (str (inc i))))))))))))
-    (throw (java.io.FileNotFoundException. (format "folder %s not found" folder)))))
+(comment
+  (let [n    (sum CTP404-mask)
+        rows (mrows George-mask)
+        cols (ncols George-mask)]
+    (def CTP404-regions {:teflon       [[119 150] [cols rows] n CTP404-mask 1.790]
+                         :PMP          [[154 103] [cols rows] n CTP404-mask 0.883]
+                         :LDPE         [[132  50] [cols rows] n CTP404-mask 0.979]
+                         :polystyrene  [[ 74  42] [cols rows] n CTP404-mask 1.024]
+                         :delrin       [[ 61 143] [cols rows] n CTP404-mask 1.359]
+                         :air-top      [[ 49  61] [cols rows] n CTP404-mask 0.00113]
+                         :air-bottom   [[143 132] [cols rows] n CTP404-mask 0.00113]
+                         #_#_:acrylic-left [[ 26  90]  1.160] ;; outer shell
+                         }))
 
 
 
-#_(def m (into {} (mapv (fn [[k v]] [k (extract-region-stat sample-x v)]) insert-types)))
+  ;; coordinates are top left pixel
+  ;; measured on slice 33
 
-;; (defn show-series-region-stat [folder slice-id insert & {:keys [rows cols] :or {rows 200 cols 200}}]
-;;   (transduce (filter #(.contains (.getName ^java.io.File %) (format "_%d.txt" slice-id)))
-;;             (fn
-;;               ([acc] acc)
-;;               ([acc f]
-;;                (let [name (.getName ^java.io.File f)
-;;                      v (load-vctr f (fv 40000))]
-;;                  (assoc acc name (:mean (pct.test/extract-region-stat v (get insert-types insert)))))))
-;;             {}
-;;             (file-seq (java.io.File. ^String folder))))
-
-#_(defn show-slice-error-progress [folder slice-id insert & {:keys [rows cols] :or {rows 200 cols 200}}]
-  (transduce (filter #(.contains (.getName ^java.io.File %) (format "_%d.txt" slice-id)))
-            (fn
-              ([acc] acc)
-              ([acc f]
-               (let [name (.getName ^java.io.File f)
-                     v (load-vctr f (fv 40000))]
-                 (assoc acc name (:mean (pct.test/extract-region-stat v (get insert-types insert)))))))
-            {}
-            (file-seq (java.io.File. ^String folder))))
-
-#_(defn compute-series-stat [x inserts & {:keys [rows cols] :or {rows 200 cols 200}}]
-  (let [offset (* rows cols)]
-    ))
+  (let [n    (sum George-mask)
+        rows (mrows George-mask)
+        cols (ncols George-mask)]
+    (defonce George-regions {:dental-enamel   [[ 35  97]  [cols rows] n George-mask 1.755]
+                             :dental-dentin   [[ 55  49]  [cols rows] n George-mask 1.495]
+                             :cortical-bone   [[105  35]  [cols rows] n George-mask 1.555]
+                             :trabecular-bone [[147  66]  [cols rows] n George-mask 1.100]
+                             :spinal-cord     [[150 118]  [cols rows] n George-mask 1.040]
+                             :spinal-disc     [[111 152]  [cols rows] n George-mask 1.070]
+                             :brain-tissue    [[ 60 143]  [cols rows] n George-mask 1.040]
+                             :sinus           [[ 86  65]  [cols rows] n George-mask 0.220]
+                             #_#_:blue-wax        [[] 0.980]}))
+  )
 
 
-#_(def m (transduce (filter #(.contains (.getName ^java.io.File %) "_8.txt"))
-            (fn
-              ([acc] acc)
-              ([acc f]
-               (let [name (.getName ^java.io.File f)
-                     v (load-vctr f (fv 40000))]
-                 (assoc acc name (pct.test/extract-region-stat v (:teflon insert-types))))))
-            {}
-            (file-seq (java.io.File. "/local/cair/dev/cells/resources/result/async_run_Tuesday_8_DROP_median_filter_lambda=0.050000,chunk-size=1000000,[-3,3]"))))
+(defn region-stat
+  [^RealGEMatrix slice ^RecRegion region]
+  (let [^double _mean (mean* region slice)]
+   {:mean _mean :std (std* region slice) :error (- _mean ^double (:expected region))}))
 
+(defn slice-stat
+  [^RealGEMatrix slice regions]
+  (into {} (mapv (fn [[k v]]
+                   [k (region-stat slice v)])
+                 regions)))
+
+
+(defn series-stat
+  [^RealBlockVector x [^long rows ^long cols ^long slices] regions sample-idx]
+  (let [slice-offset (* rows cols)]
+    (into {} (mapv (fn [^long i]
+                     (let [slice (trans (view-ge (subvector x (* i slice-offset) slice-offset)
+                                                 rows cols))]
+                       (slice-stat slice regions)))
+                   sample-idx))))
+
+
+(defn compare-stats
+  ([stat-1 stat-2]
+   (compare-stats stat-1 stat-2 [:all]))
+  ([stat-1 stat-2 attr]
+   (let [curr-attr (first attr)
+         rest-attr (or (next  attr) [:all])]
+     ;; (println curr-attr rest-attr)
+     (into {} (mapv (fn [[k v1]]
+                      (if (or (identical? curr-attr :all)
+                              (identical? curr-attr k))
+                        (if-let [v2 (stat-2 k)]
+                          (if (instance? java.util.Map v1)
+                            [k (compare-stats v1 v2 rest-attr)]
+                            [k [v1 v2]])
+                          [k [v1 nil]])))
+                    stat-1)))))
 
