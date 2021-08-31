@@ -130,7 +130,9 @@
               a (Math/pow ^double alpha ^long ell)]
           #_(println ell)
           (dotimes [i len]
-            (aset x i (- (aget x i) (* a (aget v i)))))
+            (let [xi (aget x i)]
+              (if-not (= xi 0.0)
+                (aset x i (- xi (* a (aget v i)))))))
           (recur (unchecked-inc ell)))
         x))))
 
