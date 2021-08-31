@@ -26,6 +26,7 @@
         ;; org.clojure/data.json     {:mvn/version "2.3.1"}
         cheshire/cheshire         {:mvn/version "5.10.0"}
         criterium/criterium       {:mvn/version "0.4.6"}
+        org.apache.commons/commons-math3 {:mvn/version "3.6.1"}
         ,}
 
  :aliases {:repl/rebel
