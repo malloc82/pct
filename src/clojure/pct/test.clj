@@ -3,6 +3,7 @@
   (:require [clojure.java.io :as io]
             [clojure.core.async :as a :refer [>!! <!! >! <!]]
             [clojure.string :as s]
+            [clojure.spec.alpha :as spec]
             [taoensso.timbre :as timbre]
             [uncomplicate.fluokitten.core :refer [fmap fmap!]]
             [uncomplicate.neanderthal
@@ -59,7 +60,7 @@
       (math/sqrt (/ ^double (dot (fmap #(math/sqr (- ^double % _mean)) area) mask) n))))
   (error* [this slice]
     (let [^double _mean (mean* this slice)]
-      (- _mean expected))))
+      (* (/ (- _mean expected) expected) 100))))
 
 
 (defn newRecRegion [^long x ^long y ^RealGEMatrix mask ^double expected]
@@ -75,6 +76,7 @@
                               [1 1 1 1 1 1 1]
                               [0 1 1 1 1 1 0]
                               [0 0 1 1 1 0 0]])))
+
 
 (def acrylic-vertical-mask (trans (dge [[0 0 1 0 0]
                                         [0 1 1 1 0]
@@ -102,6 +104,7 @@
                                           [0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0]
                                           [0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0]])))
 
+
 (def George-mask (trans (dge [[0 0 0 1 1 1 1 0 0 0]
                               [0 0 1 1 1 1 1 1 0 0]
                               [0 1 1 1 1 1 1 1 1 0]
@@ -113,6 +116,7 @@
                               [0 0 1 1 1 1 1 1 0 0]
                               [0 0 0 1 1 1 1 0 0 0]])))
 
+
 (def CTP404-regions {:teflon         (newRecRegion 119 150 CTP404-mask 1.790)
                      :PMP            (newRecRegion 154 103 CTP404-mask 0.883)
                      :LDPE           (newRecRegion 132  50 CTP404-mask 0.979)
@@ -122,9 +126,8 @@
                      :air-bottom     (newRecRegion 143 132 CTP404-mask 0.00113)
                      :acrylic-left   (newRecRegion  26  91 acrylic-vertical-mask 1.160)
                      :acrylic-right  (newRecRegion 169  91 acrylic-vertical-mask 1.160)
-                     :acrylic-top    (newRecRegion  91  26 acrylic-vertical-mask 1.160)
-                     :acrylic-bottom (newRecRegion  91 169 acrylic-vertical-mask 1.160)
-                     })
+                     :acrylic-top    (newRecRegion  91  26 acrylic-horizontal-mask 1.160)
+                     :acrylic-bottom (newRecRegion  91 169 acrylic-horizontal-mask 1.160)})
 
 (def George-regions {:dental-enamel   (newRecRegion  35  97 George-mask 1.755)
                      :dental-dentin   (newRecRegion  55  49 George-mask 1.495)
@@ -136,7 +139,10 @@
                      :sinus           (newRecRegion  86  65 George-mask 0.220)
                      #_#_:blue-wax        [[] 0.980]})
 
+(spec/def ::regions-spec (spec/map-of keyword? #(satisfies? IRegionStat %)))
+
 (comment
+  ;; old stuffs
   (let [n    (sum CTP404-mask)
         rows (mrows George-mask)
         cols (ncols George-mask)]
@@ -166,24 +172,31 @@
                              :spinal-disc     [[111 152]  [cols rows] n George-mask 1.070]
                              :brain-tissue    [[ 60 143]  [cols rows] n George-mask 1.040]
                              :sinus           [[ 86  65]  [cols rows] n George-mask 0.220]
-                             #_#_:blue-wax        [[] 0.980]}))
-  )
+                             #_#_:blue-wax        [[] 0.980]})))
 
 
 (defn region-stat
   [^RealGEMatrix slice ^RecRegion region]
   (let [^double _mean (mean* region slice)]
-   {:mean _mean :std (std* region slice) :error (- _mean ^double (:expected region))}))
+    {:mean  _mean
+     :std   (std* region slice)
+     :error (let [^double rsp (:expected region)]
+              (* (/ (- _mean rsp) rsp) 100))}))
+
 
 (defn slice-stat
   [^RealGEMatrix slice regions]
+  {:pre [(spec/valid? ::regions-spec regions)]}
   (into {} (mapv (fn [[k v]]
+                   ;; (println v)
                    [k (region-stat slice v)])
                  regions)))
 
 
 (defn series-stat
   [^RealBlockVector x [^long rows ^long cols ^long slices] regions sample-idx]
+  {:pre [(spec/valid? ::regions-spec regions)
+         (spec/valid? (spec/coll-of int?) sample-idx)]}
   (let [slice-offset (* rows cols)]
     (into {} (mapv (fn [^long i]
                      (let [slice (trans (view-ge (subvector x (* i slice-offset) slice-offset)
