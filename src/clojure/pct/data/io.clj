@@ -608,25 +608,25 @@
 
 (defn save-result
   [^HashMap results rows cols slices recon-opts opts]
-  {:pre [(and (:x0 opts) (:regions opts) (:samples opts))]}
+  {:pre [#_(and (:x0 opts) (:regions opts) (:samples opts))]}
   (let [^String folder (let [timestamp (or (-> results :properties :timestamp) (pct.util.system/timestamp))
                              hostname  (or (-> results :properties :hostname)  (pct.util.system/hostname))]
                          (format "%s/%s_%s" (or (:folder opts) ".") hostname timestamp))
         folder_f (java.io.File. folder)]
     (if (.exists folder_f)
       (println (format "Folder %s already exists, results probably already saved. skip." folder))
-      (.mkdirs folder_f)
-      (save-recon-opts (-> recon-opts
-                           (assoc :properties (.get results :properties))
-                           (assoc :result (:stats opts)))
-                       folder)
-      (doseq [[k v] results]
-        (when (int? k)
-          (save-series (first v) rows cols slices
-                       (-> opts
-                           (assoc  :iter k)
-                           (assoc  :folder folder)
-                           (dissoc :recon-opts))))))))
+      (do (.mkdirs folder_f)
+          (save-recon-opts (-> recon-opts
+                               (assoc :properties (.get results :properties))
+                               (assoc :result (:result opts)))
+                           folder)
+          (doseq [[k v] results]
+            (when (int? k)
+              (save-series (first v) rows cols slices
+                           (-> opts
+                               (assoc  :iter k)
+                               (assoc  :folder folder)
+                               (dissoc :recon-opts)))))))))
 
 
 (comment

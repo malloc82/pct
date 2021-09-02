@@ -68,7 +68,7 @@
 
   (error* [this slice]
     (let [^double _mean (mean* this slice)]
-      (/ (- _mean expected) expected))))
+      (* (/ (- _mean expected) expected) 100))))
 
 
 
@@ -138,8 +138,8 @@
                      :acrylic-top    (newRecRegion  91  26 acrylic-horizontal-mask 1.160)
                      :acrylic-bottom (newRecRegion  91 169 acrylic-horizontal-mask 1.160)})
 
-(def George-regions {:dental-enamel   (newRecRegion  35  97 George-mask 1.755)
-                     :dental-dentin   (newRecRegion  55  49 George-mask 1.495)
+(def George-regions {:dental-enamel   (newRecRegion  35  97 George-mask 1.495) ;; 1.755
+                     :dental-dentin   (newRecRegion  55  49 George-mask 1.755) ;; 1.495
                      :cortical-bone   (newRecRegion 105  35 George-mask 1.555)
                      :trabecular-bone (newRecRegion 147  66 George-mask 1.100)
                      :spinal-cord     (newRecRegion 150 118 George-mask 1.040)
@@ -191,7 +191,7 @@
      :mean  _mean
      :std   (std* region slice)
      :error (let [^double rsp (:expected region)]
-              (/ (- _mean rsp) rsp))}))
+              (* (/ (- _mean rsp) rsp) 100))}))
 
 (defn region-stats-stacked
   [slices ^RecRegion region]
@@ -204,7 +204,7 @@
      :std (math/sqrt (/ ^double (reduce + (mapv (fn [area] (dot (fmap #(math/sqr (- ^double % _mean)) area) mask)) areas))
                         n))
      :error (let [^double rsp (:expected region)]
-              (/ (- _mean rsp) rsp))}))
+              (* (/ (- _mean rsp) rsp) 100))}))
 
 
 (defn slice-stats
