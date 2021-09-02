@@ -533,23 +533,26 @@
                        (keyword %))))))
 
 
-(defn export-plot-data [data path]
+(defn export-data [data path]
   (let [^java.io.File fout   (clojure.java.io/file path)
         ^java.io.File folder (.getParentFile fout)]
-    (assert (not (.exists fout)) (format "File exists: %s" path))
-    (when (or folder (not (.exists folder)))
-      (.mkdirs folder))
-    (with-open [f (clojure.java.io/writer path)]
-      (.write f (generate-string (-> data
-                                     (#(if (:date %)     % (assoc % :date     (pct.util.system/timestamp))))
-                                     (#(if (:hostname %) % (assoc % :hostname (pct.util.system/hostname)))))
-                                 {:pretty true
-                                  :key-fn #(if (clojure.core/keyword? %)
-                                             (clojure.core/name %)
-                                             (clojure.core/str %))})))))
+    #_(assert (not (.exists fout)) (format "File exists: %s" path))
+    #_(println "Data = " data)
+    (if (.exists fout)
+      (println (format "File exists: %s. Skip." path))
+      (do (when (not (.exists folder))
+            (.mkdirs folder))
+          (with-open [f (clojure.java.io/writer path)]
+            (.write f (generate-string (-> data
+                                           (#(if (:timestamp %) % (assoc % :timestamp (pct.util.system/timestamp))))
+                                           (#(if (:hostname  %) % (assoc % :hostname  (pct.util.system/hostname)))))
+                                       {:pretty true
+                                        :key-fn #(if (clojure.core/keyword? %)
+                                                   (clojure.core/name %)
+                                                   (clojure.core/str %))})))))))
 
 
-(defn load-plot-data
+(defn load-data
   [^String path]
   (let [f (java.io.File. path)]
     (when (and (.exists f) (.isFile f))
@@ -605,21 +608,25 @@
 
 (defn save-result
   [^HashMap results rows cols slices recon-opts opts]
+  {:pre [(and (:x0 opts) (:regions opts) (:samples opts))]}
   (let [^String folder (let [timestamp (or (-> results :properties :timestamp) (pct.util.system/timestamp))
                              hostname  (or (-> results :properties :hostname)  (pct.util.system/hostname))]
                          (format "%s/%s_%s" (or (:folder opts) ".") hostname timestamp))
         folder_f (java.io.File. folder)]
     (if (.exists folder_f)
       (println (format "Folder %s already exists, results probably already saved. skip." folder))
-      (do (.mkdirs folder_f)
-          (save-recon-opts (assoc recon-opts :properties (.get results :properties)) folder)
-          (doseq [[k v] results]
-            (when (int? k)
-              (save-series (first v) rows cols slices
-                           (-> opts
-                               (assoc  :iter k)
-                               (assoc  :folder folder)
-                               (dissoc :recon-opts)))))))))
+      (.mkdirs folder_f)
+      (save-recon-opts (-> recon-opts
+                           (assoc :properties (.get results :properties))
+                           (assoc :result (:stats opts)))
+                       folder)
+      (doseq [[k v] results]
+        (when (int? k)
+          (save-series (first v) rows cols slices
+                       (-> opts
+                           (assoc  :iter k)
+                           (assoc  :folder folder)
+                           (dissoc :recon-opts))))))))
 
 
 (comment

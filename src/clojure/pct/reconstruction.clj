@@ -204,8 +204,8 @@
               tvs?   (:tvs? opts)
               rows   (.rows global-index)
               cols   (.cols global-index)
-              alpha  (double (or (:alpha opts) 0.75))
-              tvs-N  (long (or (:tvs-N opts) 5))
+              alpha  (double (or (:tvs-alpha opts) 0.75))
+              tvs-N  (long   (or (:tvs-N     opts) 5))
               local-x ^doubles (transfer! (subvector init-x (* offset-x slice-offset) data-len)
                                           (double-array data-len))
               dump (-> opts :dump)]
@@ -340,8 +340,8 @@
           thread-name (format "[%3s]" (-> node-list first :key))
           tvs? (:tvs? opts)
           iterations    (long (or (:iterations opts) 6))
-          alpha (double (or (:alpha opts) 0.75))
-          tvs-N (long   (or (:tvs-N opts) 5))
+          alpha (double (or (:tvs-alpha opts) 0.75))
+          tvs-N (long   (or (:tvs-N     opts) 5))
           ;; slice-offset (long (pct.data/slice-size* global-index))
           ]
       (let [local-x (transfer! (subvector init-x (* offset-x slice-offset) slice-offset)
@@ -442,7 +442,8 @@
           (let [__end (System/nanoTime)]
             (.put results :properties {:runtime   (format "%.4f ms" (/ (double (- __end __start)) 1000000))
                                        :hostname  (hostname)
-                                       :timestamp (timestamp)})
+                                       :timestamp (timestamp)
+                                       :recon-type :blocked})
             results))))))
 
 
@@ -510,8 +511,8 @@
         h-size   ^int (.size histories)
         step     ^long (find-prime-step h-size)
         tvs?     (:tvs? opts)
-        alpha    (double (or (:alpha opts) 0.75)) ;; from Blake's paper 0.75 or 0.05
-        tvs-N    (long   (or (:tvs-N opts) 5))
+        alpha    (double (or (:tvs-alpha opts) 0.75)) ;; from Blake's paper 0.75 or 0.05
+        tvs-N    (long   (or (:tvs-N     opts) 5))
         [^long rows ^long cols] (:dim opts)
         shuffled-data (let [arr (object-array h-size)]
                               (when (< 0 h-size)
@@ -567,8 +568,8 @@
         tvs?   (:tvs? opts)
         rows   (.rows global-index)
         cols   (.cols global-index)
-        alpha  (double (or (:alpha opts) 0.75))
-        tvs-N  (long (or (:tvs-N opts) 5))
+        alpha  (double (or (:tvs-alpha opts) 0.75))
+        tvs-N  (long   (or (:tvs-N     opts) 5))
         data-len (dim init-x)
         local-x ^doubles (transfer! init-x (double-array data-len))]
     (timbre/info (format "start sequential art recon: history size = %d, shuffle step = %d, iteration = %d, lambda = %f"

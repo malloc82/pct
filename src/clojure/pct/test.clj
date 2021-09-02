@@ -43,24 +43,33 @@
                                  [0 1 1 1 1 1 0]
                                  [0 0 1 1 1 0 0]]))
 
-(defprotocol IRegionStat
+(defprotocol IRegionStats
   (mean*  [this slice])
   (std*   [this slice])
   (error* [this slice]))
 
+(defprotocol IRegion
+  (mask-filter* [this slice]))
+
 
 (defrecord RecRegion [^long x ^long y ^long cols ^long rows ^long n ^RealGEMatrix mask ^double expected]
-  IRegionStat
+  IRegion
+  (mask-filter* [this slice]
+    (fmap #(* ^double %1 (double %2)) (submatrix slice x y cols rows) mask))
+
+  IRegionStats
   (mean* [this slice]
-    (let [area (fmap #(* ^double %1 (double %2)) (submatrix slice x y cols rows) mask)]
-      (/ ^double (sum area) n)))
+    (/ ^double (sum (mask-filter* this slice)) n))
+
   (std* [this slice]
-    (let [area  (fmap #(* ^double %1 (double %2)) (submatrix slice x y cols rows) mask)
+    (let [area  (mask-filter* this slice)
           _mean (/ ^double (sum area) n)]
       (math/sqrt (/ ^double (dot (fmap #(math/sqr (- ^double % _mean)) area) mask) n))))
+
   (error* [this slice]
     (let [^double _mean (mean* this slice)]
-      (* (/ (- _mean expected) expected) 100))))
+      (/ (- _mean expected) expected))))
+
 
 
 (defn newRecRegion [^long x ^long y ^RealGEMatrix mask ^double expected]
@@ -139,7 +148,7 @@
                      :sinus           (newRecRegion  86  65 George-mask 0.220)
                      #_#_:blue-wax        [[] 0.980]})
 
-(spec/def ::regions-spec (spec/map-of keyword? #(satisfies? IRegionStat %)))
+(spec/def ::regions-spec (spec/map-of keyword? #(satisfies? IRegionStats %)))
 
 (comment
   ;; old stuffs
@@ -175,50 +184,65 @@
                              #_#_:blue-wax        [[] 0.980]})))
 
 
-(defn region-stat
+(defn region-stats
   [^RealGEMatrix slice ^RecRegion region]
   (let [^double _mean (mean* region slice)]
-    {:mean  _mean
+    {#_#_:n     (:n region)
+     :mean  _mean
      :std   (std* region slice)
      :error (let [^double rsp (:expected region)]
-              (* (/ (- _mean rsp) rsp) 100))}))
+              (/ (- _mean rsp) rsp))}))
+
+(defn region-stats-stacked
+  [slices ^RecRegion region]
+  (let [n     (count slices)
+        _mean (/ ^double (reduce + (mapv #(mean* region %) slices)) n)
+        mask  (:mask region)
+        areas (mapv #(mask-filter* region %) slices)]
+    {#_#_:n (* ^long (:n region) n)
+     :mean _mean
+     :std (math/sqrt (/ ^double (reduce + (mapv (fn [area] (dot (fmap #(math/sqr (- ^double % _mean)) area) mask)) areas))
+                        n))
+     :error (let [^double rsp (:expected region)]
+              (/ (- _mean rsp) rsp))}))
 
 
-(defn slice-stat
+(defn slice-stats
   [^RealGEMatrix slice regions]
   {:pre [(spec/valid? ::regions-spec regions)]}
   (into {} (mapv (fn [[k v]]
                    ;; (println v)
-                   [k (region-stat slice v)])
+                   [k (region-stats slice v)])
                  regions)))
 
 
-(defn series-stat
+(defn series-stats
   [^RealBlockVector x [^long rows ^long cols ^long slices] regions sample-idx]
   {:pre [(spec/valid? ::regions-spec regions)
-         (spec/valid? (spec/coll-of int?) sample-idx)]}
+         (spec/valid? (spec/coll-of (and int? #(< ^long % slices))) sample-idx)]}
   (let [slice-offset (* rows cols)]
-    (into {} (mapv (fn [^long i]
-                     (let [slice (trans (view-ge (subvector x (* i slice-offset) slice-offset)
-                                                 rows cols))]
-                       (slice-stat slice regions)))
-                   sample-idx))))
+    (let [slices (mapv (fn [^long i]
+                         (trans (view-ge (subvector x (* i slice-offset) slice-offset)
+                                         rows cols)))
+                       sample-idx)]
+      (into {} (mapv (fn [[k v]] [k (region-stats-stacked slices v)]) regions)))))
 
 
 (defn compare-stats
-  ([stat-1 stat-2]
-   (compare-stats stat-1 stat-2 [:all]))
-  ([stat-1 stat-2 attr]
+  ([stats-1 stats-2]
+   (compare-stats stats-1 stats-2 [:all]))
+  ([stats-1 stats-2 attr]
    (let [curr-attr (first attr)
          rest-attr (or (next  attr) [:all])]
      ;; (println curr-attr rest-attr)
      (into {} (mapv (fn [[k v1]]
                       (if (or (identical? curr-attr :all)
                               (identical? curr-attr k))
-                        (if-let [v2 (stat-2 k)]
+                        (if-let [v2 (stats-2 k)]
                           (if (instance? java.util.Map v1)
                             [k (compare-stats v1 v2 rest-attr)]
                             [k [v1 v2]])
                           [k [v1 nil]])))
-                    stat-1)))))
+                    stats-1)))))
+
 
