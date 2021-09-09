@@ -1,4 +1,3 @@
-
 *.aux
 *.fls
 *.log
@@ -11,5 +10,4 @@
 *.fdb_latexmk
 *.bbl
 *.lof
-*.pdf
 .DS_Store
