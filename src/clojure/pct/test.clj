@@ -202,7 +202,7 @@
     {#_#_:n (* ^long (:n region) n)
      :mean _mean
      :std (math/sqrt (/ ^double (reduce + (mapv (fn [area] (dot (fmap #(math/sqr (- ^double % _mean)) area) mask)) areas))
-                        n))
+                        (* n (:n region))))
      :error (let [^double rsp (:expected region)]
               (* (/ (- _mean rsp) rsp) 100))}))
 
